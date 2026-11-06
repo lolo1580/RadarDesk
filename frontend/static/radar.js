@@ -9,6 +9,7 @@
   const DEG = Math.PI / 180;
   const SWEEP_PERIOD_MS = 4000;
   const FETCH_TIMEOUT_MS = 10000;
+  const ECHO_HISTORY_LENGTH = 3;
   const FONT_STACK = '"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
   const DEFAULT_CONFIG = Object.freeze({
@@ -118,6 +119,18 @@
     if (node && node.textContent !== value) {
       node.textContent = value;
     }
+  }
+
+  // PRNG déterministe : le grain phosphore reste stable entre deux frames.
+  function mulberry32(seed) {
+    let value = seed;
+    return () => {
+      value |= 0;
+      value = (value + 0x6d2b79f5) | 0;
+      let result = Math.imul(value ^ (value >>> 15), 1 | value);
+      result = (result + Math.imul(result ^ (result >>> 7), 61 | result)) ^ result;
+      return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
+    };
   }
 
   function toFiniteNumber(value) {
@@ -288,11 +301,25 @@
 
   function applyAircraftList(list) {
     const next = [];
+    const previousByHex = state.byHex;
+
     for (const raw of list) {
       const target = buildTarget(raw);
-      if (target) {
-        next.push(target);
+      if (!target) {
+        continue;
       }
+
+      // Conserve les échos des positions précédentes pour dessiner une
+      // traînée de rémanence réaliste derrière chaque piste.
+      const previous = previousByHex.get(target.hex);
+      target.echoes = previous
+        ? [
+            { distance: previous.distance, bearingRad: previous.bearingRad },
+            ...(previous.echoes || []),
+          ].slice(0, ECHO_HISTORY_LENGTH)
+        : [];
+
+      next.push(target);
     }
 
     state.targets = next;
@@ -645,6 +672,51 @@
     g.stroke();
     g.restore();
 
+    // Grain phosphore statique et légère réflexion de verre. Ces détails sont
+    // cuits une seule fois dans le fond pour ne pas coûter à chaque frame.
+    g.save();
+    g.beginPath();
+    g.arc(cx, cy, R - 1, 0, TAU);
+    g.clip();
+
+    const glare = g.createRadialGradient(
+      cx - R * 0.42,
+      cy - R * 0.5,
+      0,
+      cx - R * 0.42,
+      cy - R * 0.5,
+      R * 1.55,
+    );
+    glare.addColorStop(0, "rgba(185, 255, 210, 0.038)");
+    glare.addColorStop(0.32, "rgba(130, 255, 180, 0.012)");
+    glare.addColorStop(1, "rgba(0, 0, 0, 0)");
+    g.fillStyle = glare;
+    g.fillRect(cx - R, cy - R, R * 2, R * 2);
+
+    const random = mulberry32(0x5a17c0de);
+    for (let index = 0; index < 520; index += 1) {
+      const angle = random() * TAU;
+      const distance = Math.sqrt(random()) * (R - 2);
+      const x = cx + Math.sin(angle) * distance;
+      const y = cy - Math.cos(angle) * distance;
+      const bright = random();
+      const alpha = 0.008 + bright * 0.028;
+      const size = bright > 0.94 ? 1.1 : 0.55;
+      g.fillStyle = `rgba(80, 255, 145, ${alpha})`;
+      g.fillRect(x, y, size, size);
+    }
+
+    // Quelques impulsions de bruit plus marquées, très rares.
+    for (let index = 0; index < 16; index += 1) {
+      const angle = random() * TAU;
+      const distance = Math.sqrt(random()) * (R - 5);
+      const x = cx + Math.sin(angle) * distance;
+      const y = cy - Math.cos(angle) * distance;
+      g.fillStyle = "rgba(160, 255, 195, 0.055)";
+      g.fillRect(x, y, 1.1, 1.1);
+    }
+    g.restore();
+
     backgroundCanvas = layer;
   }
 
@@ -694,6 +766,12 @@
     g.moveTo(center, center);
     g.lineTo(center + R, center);
     g.stroke();
+
+    // Point chaud au bord du scope, à l'endroit où le faisceau balaie la couronne.
+    g.fillStyle = "rgba(190, 255, 210, 0.35)";
+    g.beginPath();
+    g.arc(center + R - 1, center, 1.7, 0, TAU);
+    g.fill();
     g.restore();
 
     sweepCanvas = layer;
@@ -755,9 +833,9 @@
     for (const target of ordered) {
       const x = target._x;
       const y = target._y;
-      const callWidth = target.labelCallsign.length * view.labelFont * 0.63;
-      const detailWidth = target.detailLabel.length * view.detailFont * 0.6;
-      const width = Math.max(callWidth, detailWidth) + 4;
+      const callWidth = target.labelCallsign.length * view.labelFont * 0.66;
+      const detailWidth = target.detailLabel.length * view.detailFont * 0.63;
+      const width = Math.max(callWidth, detailWidth) + 5;
       const blockHeight = view.labelFont + view.detailFont + 3;
       const preferred = x < view.cx ? "left" : "right";
       const opposite = preferred === "left" ? "right" : "left";
@@ -768,8 +846,10 @@
         blockHeight + 10,
         -(blockHeight * 2 + 7),
         blockHeight * 2 + 10,
+        -(blockHeight * 3 + 7),
+        blockHeight * 3 + 10,
       ];
-      const horizontalGaps = [10, 22, 36];
+      const horizontalGaps = [10, 22, 36, 52, 70];
       let best = null;
       let bestScore = Number.POSITIVE_INFINITY;
 
@@ -784,8 +864,8 @@
             const tx = x + (align === "left" ? gap : -gap);
             const left = align === "left" ? tx : tx - width;
             const right = align === "left" ? tx + width : tx;
-            const top = labelY - view.labelFont * 0.78;
-            const bottom = labelY + view.labelFont + 1 + view.detailFont * 0.78;
+            const top = labelY - view.labelFont * 0.84;
+            const bottom = labelY + view.labelFont + 1 + view.detailFont * 0.84;
             const rect = { left, right, top, bottom };
 
             let score = offsetIndex * 1.4 + gapIndex * 2.5;
@@ -857,6 +937,64 @@
       }
 
       target._intensity = intensity;
+
+      // Échos des positions précédentes : traînée de piste et points de
+      // rémanence, comme les retours successifs d'un vrai PPI.
+      const echoes = target.echoes || [];
+      const rangeDenominator = Math.max(1, state.config.distNm);
+      if (echoes.length) {
+        ctx.globalAlpha = 0.055 + 0.15 * intensity;
+        ctx.strokeStyle = target.style.detailColor;
+        ctx.lineWidth = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        for (const echo of echoes) {
+          const echoRatio = clamp(echo.distance / rangeDenominator, 0, 1);
+          ctx.lineTo(
+            view.cx + Math.sin(echo.bearingRad) * echoRatio * view.radius,
+            view.cy - Math.cos(echo.bearingRad) * echoRatio * view.radius,
+          );
+        }
+        ctx.stroke();
+      }
+
+      for (let index = echoes.length - 1; index >= 0; index -= 1) {
+        const echo = echoes[index];
+        const echoRatio = clamp(echo.distance / rangeDenominator, 0, 1);
+        const echoX = view.cx + Math.sin(echo.bearingRad) * echoRatio * view.radius;
+        const echoY = view.cy - Math.cos(echo.bearingRad) * echoRatio * view.radius;
+        const echoWeight = (echoes.length - index) / (echoes.length + 1);
+        ctx.globalAlpha = (0.045 + echoWeight * 0.17) * (0.4 + 0.6 * intensity);
+        ctx.fillStyle = target.style.color;
+        ctx.beginPath();
+        ctx.arc(echoX, echoY, 1 + echoWeight * 1.5, 0, TAU);
+        ctx.fill();
+      }
+
+      // Vecteur vitesse sur 30 secondes, comme sur un vrai scope de poursuite.
+      if (target.speed !== null && target.speed > 20) {
+        const vectorNm = (target.speed * 30) / 3600;
+        const vectorLength = clamp(
+          (vectorNm / rangeDenominator) * view.radius,
+          5,
+          28,
+        );
+        const vectorX = Math.sin(target.trackRad) * vectorLength;
+        const vectorY = -Math.cos(target.trackRad) * vectorLength;
+        ctx.globalAlpha = 0.13 + 0.24 * intensity;
+        ctx.strokeStyle = target.style.detailColor;
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + vectorX, y + vectorY);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.28 + 0.4 * intensity;
+        ctx.fillStyle = target.style.labelColor;
+        ctx.beginPath();
+        ctx.arc(x + vectorX, y + vectorY, 1, 0, TAU);
+        ctx.fill();
+      }
 
       ctx.globalAlpha = 0.035 + 0.16 * intensity;
       ctx.fillStyle = target.style.color;

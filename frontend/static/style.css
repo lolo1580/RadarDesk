@@ -88,6 +88,7 @@ button {
     transparent 3px
   );
   mix-blend-mode: screen;
+  animation: crt-flicker 7s ease-in-out infinite;
 }
 
 /* ==========================================================================
@@ -111,6 +112,28 @@ button {
   box-shadow:
     inset 0 0 90px rgba(0, 255, 102, 0.035),
     inset 0 0 18px rgba(0, 0, 0, 0.9);
+}
+
+/* Balayage lumineux très lent de l'écran, comme un tube CRT. */
+.scope::before {
+  content: "";
+  position: absolute;
+  top: -18%;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  height: 16%;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(0, 255, 102, 0.03),
+    rgba(170, 255, 200, 0.018),
+    transparent
+  );
+  opacity: 0.7;
+  will-change: transform;
+  animation: scope-scan 9s linear infinite;
 }
 
 #radarCanvas {
@@ -696,6 +719,28 @@ h1 span {
   }
 }
 
+@keyframes scope-scan {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 760%, 0);
+  }
+}
+
+@keyframes crt-flicker {
+  0%,
+  100% {
+    opacity: 0.22;
+  }
+  48% {
+    opacity: 0.255;
+  }
+  52% {
+    opacity: 0.215;
+  }
+}
+
 /* ==========================================================================
    Adaptation portrait / petites hauteurs
    ========================================================================== */
@@ -869,7 +914,13 @@ h1 span {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .metric--status[data-state="connecting"] .state-dot {
+  .metric--status[data-state="connecting"] .state-dot,
+  .crt::after,
+  .scope::before {
     animation: none;
+  }
+
+  .scope::before {
+    opacity: 0;
   }
 }

@@ -10,6 +10,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Balayage phosphore vert `#00ff66`, rotation complète en **4 s**.
 - Rémanence angulaire : chaque cible s'illumine au passage du faisceau puis
   s'atténue progressivement.
+- Traînées d'échos historiques et vecteur vitesse sur 30 s.
+- Grain phosphore, réflexion de verre et balayage CRT très lent.
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
