@@ -1,0 +1,19 @@
+{
+  "name": "RadarDesk — Radar ADS-B",
+  "short_name": "RadarDesk",
+  "description": "RadarDesk, scope radar PPI local pour le suivi ADS-B.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
