@@ -21,6 +21,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   En portrait, le réglage est intégré à l'en-tête des contacts prioritaires.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
+- Panneau « aéroport le plus proche » basé sur les coordonnées GPS configurées,
+  avec bascule vers les contacts prioritaires.
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Cache serveur de 4 s, polling frontend de 3 s.
@@ -326,6 +328,8 @@ Le service `admin` est séparé du backend radar :
 - état du radar : source, cache, nombre de cibles, configuration active ;
 - modification à chaud de la position, des portées, du cache, de la cadence,
   des sources ADS-B et de la source METAR ;
+- le panneau du radar affiche par défaut l'aéroport le plus proche des
+  coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
 - persistance dans le volume Docker `radardesk_admin_data` ;
 - bouton **Recharger** et **Réinitialiser** vers les variables d'environnement.
 
@@ -438,6 +442,9 @@ La génération et le filtrage du jeu de données sont décrits dans
 
 Deux couches météo sont disponibles :
 
+- **Aéroport le plus proche** : distance, nom, code IATA/OACI, catégorie de vol,
+  vent, visibilité, plafond, température et METAR brut, recalculés à partir des
+  coordonnées GPS configurées.
 - **METAR aéroports** avec deux fournisseurs sélectionnables depuis
   l'administration :
   - [Aviation Weather Center / NOAA](https://aviationweather.gov/data/api/) par défaut,

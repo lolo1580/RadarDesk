@@ -12,6 +12,7 @@
   const ECHO_HISTORY_LENGTH = 3;
   const RANGE_STEPS = [10, 25, 50, 75, 100, 125, 150, 200, 250];
   const RANGE_STORAGE_KEY = "radardesk.rangeNm";
+  const PANEL_MODE_KEY = "radardesk.panel";
   const WEATHER_REFRESH_MS = 5 * 60 * 1000;
   const WEATHER_TILE_FRAME_MS = 900;
   const WEATHER_COLORS = {
@@ -72,6 +73,19 @@
     streamDetail: document.getElementById("streamDetail"),
     contactList: document.getElementById("contactList"),
     contactCount: document.getElementById("contactCount"),
+    contactTitle: document.getElementById("contactsTitle"),
+    panelToggle: document.getElementById("panelToggle"),
+    nearestAirport: document.getElementById("nearestAirport"),
+    nearestCode: document.getElementById("nearestCode"),
+    nearestName: document.getElementById("nearestName"),
+    nearestDistance: document.getElementById("nearestDistance"),
+    nearestCategory: document.getElementById("nearestCategory"),
+    nearestWind: document.getElementById("nearestWind"),
+    nearestVisibility: document.getElementById("nearestVisibility"),
+    nearestCeiling: document.getElementById("nearestCeiling"),
+    nearestTemp: document.getElementById("nearestTemp"),
+    nearestRaw: document.getElementById("nearestRaw"),
+    nearestWeatherBtn: document.getElementById("nearestWeatherBtn"),
     sourceName: document.getElementById("sourceName"),
     sourceMode: document.getElementById("sourceMode"),
     lastUpdate: document.getElementById("lastUpdate"),
@@ -107,6 +121,8 @@
     airports: [],
     visibleAirports: [],
     airportWeather: new Map(),
+    nearestAirport: null,
+    panelMode: "airport",
     weatherSignature: "",
     weatherFetchedAt: 0,
     focusedAirport: null,
@@ -970,6 +986,7 @@
       return a.distance - b.distance;
     });
     state.visibleAirports = visible;
+    updateNearestAirport();
 
     if (
       state.focusedAirport &&
@@ -1027,13 +1044,133 @@
     return `${direction} / ${speed}${gust}`;
   }
 
+  function updateNearestAirport() {
+    if (!state.airports.length) {
+      state.nearestAirport = null;
+      renderNearestAirport();
+      return;
+    }
+
+    let nearest = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const airport of state.airports) {
+      const distance = distanceNm(
+        state.config.lat,
+        state.config.lon,
+        airport.lat,
+        airport.lon,
+      );
+      if (Number.isFinite(distance) && distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = airport;
+      }
+    }
+
+    state.nearestAirport = nearest
+      ? { ...nearest, distance: nearestDistance }
+      : null;
+    renderNearestAirport();
+  }
+
+  function renderNearestAirport() {
+    const airport = state.nearestAirport;
+    if (!airport) {
+      setText(dom.nearestCode, "—");
+      setText(dom.nearestName, "Aucun aéroport disponible");
+      for (const node of [
+        dom.nearestDistance,
+        dom.nearestCategory,
+        dom.nearestWind,
+        dom.nearestVisibility,
+        dom.nearestCeiling,
+        dom.nearestTemp,
+      ]) {
+        setText(node, "—");
+      }
+      setText(dom.nearestRaw, "");
+      dom.nearestWeatherBtn.disabled = true;
+      return;
+    }
+
+    const metar = state.airportWeather.get(airport.icao);
+    const category = metar?.flight_category || "N/A";
+    const categoryColor = metar
+      ? weatherColor(metar.flight_category)
+      : WEATHER_COLORS.UNKNOWN;
+
+    setText(
+      dom.nearestCode,
+      airport.iata ? `${airport.iata}/${airport.icao}` : airport.icao,
+    );
+    setText(dom.nearestName, airport.name || "");
+    setText(dom.nearestDistance, `${airport.distance.toFixed(1)} NM`);
+    setText(dom.nearestCategory, category);
+    dom.nearestCategory.style.color = categoryColor;
+
+    if (metar) {
+      setText(dom.nearestWind, windLabel(metar));
+      setText(
+        dom.nearestVisibility,
+        metar.visibility_sm !== null && metar.visibility_sm !== undefined
+          ? `${metar.visibility_sm} SM`
+          : "—",
+      );
+      setText(dom.nearestCeiling, ceilingLabel(metar));
+      setText(
+        dom.nearestTemp,
+        metar.temperature_c !== null && metar.temperature_c !== undefined
+          ? `${metar.temperature_c}° / ${metar.dewpoint_c ?? "—"}°`
+          : "—",
+      );
+      setText(dom.nearestRaw, metar.raw || "");
+    } else {
+      for (const node of [
+        dom.nearestWind,
+        dom.nearestVisibility,
+        dom.nearestCeiling,
+        dom.nearestTemp,
+      ]) {
+        setText(node, "—");
+      }
+      setText(dom.nearestRaw, "METAR indisponible pour cette station.");
+    }
+    dom.nearestWeatherBtn.disabled = false;
+  }
+
+  function setPanelMode(mode) {
+    state.panelMode = mode === "contacts" ? "contacts" : "airport";
+    try {
+      window.localStorage.setItem(PANEL_MODE_KEY, state.panelMode);
+    } catch {
+      // Mode valable pour la session uniquement.
+    }
+
+    const airportMode = state.panelMode === "airport";
+    dom.contactList.hidden = airportMode;
+    dom.nearestAirport.hidden = !airportMode;
+    dom.contactCount.hidden = airportMode;
+    setText(
+      dom.contactTitle,
+      airportMode ? "AÉROPORT LE PLUS PROCHE" : "CONTACTS PRIORITAIRES",
+    );
+    setText(dom.panelToggle, airportMode ? "CONTACTS" : "AÉROPORT");
+    dom.panelToggle.setAttribute(
+      "aria-label",
+      airportMode ? "Afficher les contacts" : "Afficher l'aéroport le plus proche",
+    );
+    renderNearestAirport();
+  }
+
   async function refreshAirportWeather(force = false) {
     const rangeNm = state.config.distNm;
     const ids = [
       ...new Set(
-        state.visibleAirports
-          .filter((airport) => airport.distance <= rangeNm && airport.icao)
-          .map((airport) => airport.icao),
+        [
+          ...state.visibleAirports
+            .filter((airport) => airport.distance <= rangeNm && airport.icao)
+            .map((airport) => airport.icao),
+          ...(state.nearestAirport?.icao ? [state.nearestAirport.icao] : []),
+        ],
       ),
     ].sort();
     const signature = ids.join(",");
@@ -1073,6 +1210,7 @@
       // La météo aéroport est optionnelle : le scope reste opérationnel.
     } finally {
       state.weatherFetchedAt = Date.now();
+      renderNearestAirport();
     }
   }
 
@@ -2013,6 +2151,14 @@
   });
 
   dom.weatherClose.addEventListener("click", hideWeatherCard);
+  dom.panelToggle.addEventListener("click", () => {
+    setPanelMode(state.panelMode === "airport" ? "contacts" : "airport");
+  });
+  dom.nearestWeatherBtn.addEventListener("click", () => {
+    if (state.nearestAirport) {
+      showWeatherCard(state.nearestAirport);
+    }
+  });
 
   /* ========================================================================
      API / polling
@@ -2291,6 +2437,16 @@
   resizeCanvas();
   updateHud();
   updateRangeButtons();
+  let initialPanel = "airport";
+  try {
+    const storedPanel = window.localStorage.getItem(PANEL_MODE_KEY);
+    if (storedPanel === "contacts" || storedPanel === "airport") {
+      initialPanel = storedPanel;
+    }
+  } catch {
+    // Mode par défaut.
+  }
+  setPanelMode(initialPanel);
   setStreamState("connecting", "ACQUISITION");
   startFrameLoop();
   loadAirports();

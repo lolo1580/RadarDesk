@@ -132,10 +132,29 @@
                     aria-label="Augmenter la distance d'affichage">+</button>
           </div>
           <span id="contactCount">00/00</span>
+          <button class="panel-toggle" id="panelToggle" type="button">AÉROPORT</button>
         </div>
         <ol class="contacts" id="contactList">
           <li class="contacts__empty">ACQUISITION DU SIGNAL...</li>
         </ol>
+        <div class="nearest-airport" id="nearestAirport" hidden>
+          <div class="nearest-airport__head">
+            <strong id="nearestCode">—</strong>
+            <span id="nearestName">—</span>
+          </div>
+          <div class="nearest-airport__grid">
+            <div><span>DISTANCE</span><strong id="nearestDistance">—</strong></div>
+            <div><span>CATÉGORIE</span><strong id="nearestCategory">—</strong></div>
+            <div><span>VENT</span><strong id="nearestWind">—</strong></div>
+            <div><span>VISIBILITÉ</span><strong id="nearestVisibility">—</strong></div>
+            <div><span>PLAFOND</span><strong id="nearestCeiling">—</strong></div>
+            <div><span>TEMP.</span><strong id="nearestTemp">—</strong></div>
+          </div>
+          <p class="nearest-airport__raw" id="nearestRaw">—</p>
+          <button class="nearest-airport__action" id="nearestWeatherBtn" type="button">
+            FICHE METAR
+          </button>
+        </div>
       </section>
 
       <footer class="console__foot">

@@ -894,6 +894,64 @@ async def api_health() -> dict[str, Any]:
     }
 
 
+def parse_metar_visibility_sm(raw: str) -> float | None:
+    """Extrait une visibilité METAR brute (mètres ou SM) en statute miles."""
+    text = raw.upper()
+    if "CAVOK" in text:
+        return 6.21
+
+    wind = re.search(r"\b(?:\d{3}|VRB)\d{2,3}(?:G\d{2,3})?(?:KT|MPS)\b", text)
+    rest = text[wind.end() :] if wind else text
+
+    sm = re.search(r"\b(\d+(?:/\d+)?)\s*SM\b", rest)
+    if sm:
+        value = sm.group(1)
+        try:
+            if "/" in value:
+                numerator, denominator = value.split("/", 1)
+                return round(float(numerator) / float(denominator), 2)
+            return round(float(value), 2)
+        except (ValueError, ZeroDivisionError):
+            return None
+
+    metric = re.search(r"\b(\d{4})(?:NDV)?\b", rest)
+    if metric:
+        meters = int(metric.group(1))
+        if meters >= 9999:
+            return 6.21
+        return round(meters / 1609.344, 2)
+    return None
+
+
+def derive_flight_category(
+    visibility_sm: float | None,
+    cloud_layers: list[dict[str, Any]],
+) -> str:
+    """Déduit la catégorie de vol quand le fournisseur ne la fournit pas."""
+    ceilings = [
+        cloud["base_ft"]
+        for cloud in cloud_layers
+        if cloud.get("cover") in {"BKN", "OVC", "VV"}
+        and cloud.get("base_ft") is not None
+    ]
+    ceiling = min(ceilings) if ceilings else None
+    if visibility_sm is None and ceiling is None:
+        return "UNKNOWN"
+    if (visibility_sm is not None and visibility_sm < 1) or (
+        ceiling is not None and ceiling < 500
+    ):
+        return "LIFR"
+    if (visibility_sm is not None and visibility_sm < 3) or (
+        ceiling is not None and ceiling < 1000
+    ):
+        return "IFR"
+    if (visibility_sm is not None and visibility_sm <= 5) or (
+        ceiling is not None and ceiling <= 3000
+    ):
+        return "MVFR"
+    return "VFR"
+
+
 def clean_metar(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalise une observation METAR pour le frontend."""
     clouds = []
@@ -907,21 +965,30 @@ def clean_metar(raw: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    visibility = _to_float(raw.get("visib"))
+    raw_metar = raw.get("rawOb") or ""
+    if visibility is None:
+        visibility = parse_metar_visibility_sm(raw_metar)
+
+    category = str(raw.get("fltCat") or "UNKNOWN").upper()
+    if category not in {"VFR", "MVFR", "IFR", "LIFR"}:
+        category = derive_flight_category(visibility, clouds)
+
     return {
         "icao": raw.get("icaoId"),
         "name": raw.get("name"),
         "observed": raw.get("reportTime"),
-        "flight_category": (raw.get("fltCat") or "UNKNOWN").upper(),
+        "flight_category": category,
         "wind_direction": raw.get("wdir"),
         "wind_speed_kt": raw.get("wspd"),
         "wind_gust_kt": raw.get("wgst"),
-        "visibility_sm": raw.get("visib"),
+        "visibility_sm": round(visibility, 2) if visibility is not None else None,
         "temperature_c": raw.get("temp"),
         "dewpoint_c": raw.get("dewp"),
         "altimeter_hpa": raw.get("altim"),
         "weather": raw.get("wxString") or "",
         "clouds": clouds,
-        "raw": raw.get("rawOb") or "",
+        "raw": raw_metar,
     }
 
 
