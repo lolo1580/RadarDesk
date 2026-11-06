@@ -20,7 +20,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
-- Cache serveur de 2,5 s, polling frontend de 3 s.
+- Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
 
 > Outil de visualisation uniquement. Ne pas utiliser pour la navigation aérienne
@@ -44,7 +44,7 @@ Navigateur / Morph Browser
 ┌───────────────────────────┐
 │ backend                   │
 │ FastAPI/Uvicorn :8000     │
-│ cache 2,5 s + normalisation│
+│ cache 4 s + normalisation│
 └─────────────┬─────────────┘
               │ HTTPS
       ┌───────┴────────┐
@@ -184,8 +184,9 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_RADIUS_NM` | `50` | Rayon d'affichage par défaut en NM |
 | `ADSB_MAX_RADIUS_NM` | `150` | Portée maximale récupérée en amont |
 | `ADSB_REFRESH_MS` | `3000` | Intervalle de polling frontend |
-| `ADSB_CACHE_TTL` | `2.5` | Durée du cache serveur (s) |
+| `ADSB_CACHE_TTL` | `4.0` | Durée du cache serveur (s) |
 | `ADSB_STALE_TTL` | `120` | Durée maximale du cache de secours (s) |
+| `ADSB_FAILURE_BACKOFF` | `5.0` | Pause après échec upstream (s) |
 | `ADSB_TIMEOUT` | `4.0` | Timeout d'un appel upstream (s) |
 | `ADSB_PRIMARY_PROVIDER` | `airplanes_live` | Source primaire |
 | `ADSB_FALLBACK_PROVIDER` | `adsb_lol` | Secours, ou `none` |

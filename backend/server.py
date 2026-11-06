@@ -55,8 +55,9 @@ MAX_RADIUS_NM = int(os.getenv("ADSB_MAX_RADIUS_NM", "150"))
 
 # Cache : le frontend interroge l'API toutes les 3 secondes.
 REFRESH_MS = int(os.getenv("ADSB_REFRESH_MS", "3000"))
-CACHE_TTL_S = float(os.getenv("ADSB_CACHE_TTL", "2.5"))
+CACHE_TTL_S = float(os.getenv("ADSB_CACHE_TTL", "4.0"))
 STALE_TTL_S = float(os.getenv("ADSB_STALE_TTL", "120"))
+UPSTREAM_FAILURE_BACKOFF_S = float(os.getenv("ADSB_FAILURE_BACKOFF", "5.0"))
 
 # Timeout d'un appel upstream (secondes).
 UPSTREAM_TIMEOUT_S = float(os.getenv("ADSB_TIMEOUT", "4.0"))
@@ -209,6 +210,7 @@ class CacheEntry(BaseModel):
 _cache: CacheEntry | None = None
 _cache_lock = asyncio.Lock()
 _primary_blocked_until = 0.0
+_upstream_retry_after = 0.0
 _last_upstream_error: str | None = None
 _runtime_config_active = False
 
@@ -305,7 +307,8 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global LAT, LON, DIST_NM, MAX_RADIUS_NM
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
-    global _cache, _primary_blocked_until, _last_upstream_error, _runtime_config_active
+    global _cache, _primary_blocked_until, _upstream_retry_after
+    global _last_upstream_error, _runtime_config_active
 
     LAT = float(values["lat"])
     LON = float(values["lon"])
@@ -321,6 +324,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
     _cache = None
     _primary_blocked_until = 0.0
+    _upstream_retry_after = 0.0
     _last_upstream_error = None
     _runtime_config_active = active
 
@@ -598,7 +602,7 @@ async def fetch_best_snapshot(client: httpx.AsyncClient) -> CacheEntry:
 
 async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, float]:
     """Retourne (snapshot, stale, age_secondes) avec un cache anti-rafale."""
-    global _cache, _last_upstream_error
+    global _cache, _last_upstream_error, _upstream_retry_after
 
     now = time.monotonic()
     cached = _cache
@@ -606,6 +610,8 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
         age = now - cached.fetched_monotonic
         if age < CACHE_TTL_S:
             return cached, False, age
+        if now < _upstream_retry_after and age <= STALE_TTL_S:
+            return cached, True, age
 
     async with _cache_lock:
         # Un autre client a pu rafraîchir le cache pendant l'attente du verrou.
@@ -615,10 +621,13 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
             age = now - cached.fetched_monotonic
             if age < CACHE_TTL_S:
                 return cached, False, age
+            if now < _upstream_retry_after and age <= STALE_TTL_S:
+                return cached, True, age
 
         try:
             fresh = await fetch_best_snapshot(client)
             _cache = fresh
+            _upstream_retry_after = 0.0
             _last_upstream_error = None
             logger.info(
                 "MAJ ADS-B: %d cible(s) via %s%s en %.0f ms",
@@ -630,6 +639,7 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
             return fresh, False, 0.0
         except UpstreamError as exc:
             _last_upstream_error = str(exc)
+            _upstream_retry_after = time.monotonic() + UPSTREAM_FAILURE_BACKOFF_S
             logger.error("Échec de récupération ADS-B: %s", exc)
 
             if cached is not None:
