@@ -125,6 +125,20 @@
           </label>
         </fieldset>
 
+        <fieldset>
+          <legend>SOURCE MÉTÉO</legend>
+          <label>
+            <span>METAR aéroports</span>
+            <select id="weather_metar_provider" name="weather_metar_provider" required>
+              <option value="aviationweather">Aviation Weather Center / NOAA</option>
+              <option value="metar_taf">metar-taf.com (clé API requise)</option>
+            </select>
+          </label>
+          <p class="field-note" id="metarProviderHint">
+            Pour metar-taf.com, renseigner METAR_TAF_API_KEY dans .env.
+          </p>
+        </fieldset>
+
         <p class="hint">
           Les modifications sont validées puis appliquées à chaud au backend radar.
           Elles restent persistées dans le volume Docker après redémarrage.

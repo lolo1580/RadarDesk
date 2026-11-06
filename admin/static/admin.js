@@ -101,11 +101,30 @@
 
     const primary = dom.form.elements.namedItem("primary_provider");
     const fallback = dom.form.elements.namedItem("fallback_provider");
+    const weatherMetar = dom.form.elements.namedItem("weather_metar_provider");
+    const metarOption = weatherMetar?.querySelector('option[value="metar_taf"]');
+    const metarConfigured = Boolean(config.metar_taf_configured);
     if (primary) {
       primary.value = config.primary_provider_key || config.primary_provider;
     }
     if (fallback) {
       fallback.value = config.fallback_provider_key || "none";
+    }
+    if (weatherMetar) {
+      if (metarOption) {
+        metarOption.disabled = !metarConfigured;
+      }
+      weatherMetar.value =
+        config.weather_metar_provider === "metar_taf" && !metarConfigured
+          ? "aviationweather"
+          : config.weather_metar_provider || "aviationweather";
+    }
+    const metarHint = document.getElementById("metarProviderHint");
+    if (metarHint) {
+      metarHint.classList.toggle("is-off", !metarConfigured);
+      metarHint.textContent = metarConfigured
+        ? "metar-taf.com est disponible : clé API configurée (1 crédit par station)."
+        : "metar-taf.com indisponible : renseigner METAR_TAF_API_KEY dans .env puis recréer le backend.";
     }
 
     const isRuntime = config.config_source === "runtime";
@@ -208,6 +227,9 @@
     }
     payload.primary_provider = dom.form.elements.namedItem("primary_provider").value;
     payload.fallback_provider = dom.form.elements.namedItem("fallback_provider").value;
+    payload.weather_metar_provider = dom.form.elements.namedItem(
+      "weather_metar_provider",
+    ).value;
     return payload;
   }
 

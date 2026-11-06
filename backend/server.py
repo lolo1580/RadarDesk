@@ -63,6 +63,13 @@ UPSTREAM_FAILURE_BACKOFF_S = float(os.getenv("ADSB_FAILURE_BACKOFF", "5.0"))
 METAR_CACHE_TTL_S = float(os.getenv("ADSB_METAR_CACHE_TTL", "600"))
 WEATHER_RADAR_CACHE_TTL_S = float(os.getenv("ADSB_WEATHER_RADAR_CACHE_TTL", "120"))
 WEATHER_MAX_STATIONS = 120
+METAR_PROVIDER = os.getenv("ADSB_METAR_PROVIDER", "aviationweather").strip().lower()
+METAR_TAF_API_KEY = os.getenv("METAR_TAF_API_KEY", "").strip()
+METAR_PROVIDERS = {"aviationweather", "metar_taf"}
+if METAR_PROVIDER not in METAR_PROVIDERS:
+    raise RuntimeError("ADSB_METAR_PROVIDER doit être aviationweather ou metar_taf.")
+if METAR_PROVIDER == "metar_taf" and not METAR_TAF_API_KEY:
+    raise RuntimeError("METAR_TAF_API_KEY est requis pour la source metar-taf.com.")
 
 # Timeout d'un appel upstream (secondes).
 UPSTREAM_TIMEOUT_S = float(os.getenv("ADSB_TIMEOUT", "4.0"))
@@ -160,6 +167,7 @@ BASELINE_CONFIG: dict[str, Any] = {
     "primary_provider": PRIMARY.key,
     "fallback_provider": FALLBACK.key if FALLBACK else "none",
     "primary_cooldown_s": PRIMARY_COOLDOWN_S,
+    "weather_metar_provider": METAR_PROVIDER,
 }
 
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
@@ -265,6 +273,11 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         .strip()
         .lower()
     )
+    weather_metar = (
+        str(payload.get("weather_metar_provider", values["weather_metar_provider"]))
+        .strip()
+        .lower()
+    )
     if primary not in PROVIDERS:
         raise ValueError(f"Source primaire inconnue: {primary!r}.")
     if fallback != "none" and fallback not in PROVIDERS:
@@ -273,6 +286,10 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         raise ValueError(
             "La source de secours doit être différente de la source primaire."
         )
+    if weather_metar not in METAR_PROVIDERS:
+        raise ValueError(f"Source METAR inconnue: {weather_metar!r}.")
+    if weather_metar == "metar_taf" and not METAR_TAF_API_KEY:
+        raise ValueError("METAR_TAF_API_KEY est requis pour metar-taf.com.")
 
     if not -90.0 <= values["lat"] <= 90.0:
         raise ValueError("La latitude doit être comprise entre -90 et 90.")
@@ -297,6 +314,7 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
 
     values["primary_provider"] = primary
     values["fallback_provider"] = fallback
+    values["weather_metar_provider"] = weather_metar
     return values
 
 
@@ -315,6 +333,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global LAT, LON, DIST_NM, MAX_RADIUS_NM
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
+    global METAR_PROVIDER
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
 
@@ -328,6 +347,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     PRIMARY_COOLDOWN_S = float(values["primary_cooldown_s"])
     PRIMARY_PROVIDER = str(values["primary_provider"])
     FALLBACK_PROVIDER = str(values["fallback_provider"])
+    METAR_PROVIDER = str(values["weather_metar_provider"])
     PRIMARY = PROVIDERS[PRIMARY_PROVIDER]
     FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
     _cache = None
@@ -360,6 +380,8 @@ def config_payload() -> dict[str, Any]:
         "primary_provider_key": PRIMARY.key,
         "fallback_provider_key": FALLBACK.key if FALLBACK else "none",
         "primary_cooldown_s": PRIMARY_COOLDOWN_S,
+        "weather_metar_provider": METAR_PROVIDER,
+        "metar_taf_configured": bool(METAR_TAF_API_KEY),
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
 
@@ -895,6 +917,97 @@ def clean_metar(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def clean_metar_taf(payload: dict[str, Any], fallback_station: str) -> dict[str, Any]:
+    """Normalise la réponse de api.metar-taf.com vers le format RadarDesk."""
+    metar = payload.get("metar") if isinstance(payload.get("metar"), dict) else {}
+    airport = payload.get("airport") if isinstance(payload.get("airport"), dict) else {}
+
+    clouds = []
+    for cloud in metar.get("clouds") or []:
+        if not isinstance(cloud, dict):
+            continue
+        cover = cloud.get("cover") or cloud.get("type") or cloud.get("code")
+        base = (
+            cloud.get("base")
+            if cloud.get("base") is not None
+            else cloud.get("base_feet")
+            if cloud.get("base_feet") is not None
+            else cloud.get("height")
+        )
+        clouds.append({"cover": cover, "base_ft": base})
+
+    ceiling = metar.get("ceiling")
+    if ceiling is not None and not any(
+        cloud.get("cover") in {"BKN", "OVC", "VV"} for cloud in clouds
+    ):
+        clouds.append({"cover": "BKN", "base_ft": ceiling})
+
+    observed = metar.get("observed")
+    if isinstance(observed, (int, float)):
+        observed = (
+            datetime.fromtimestamp(float(observed), UTC)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z")
+        )
+
+    visibility_m = metar.get("visibility")
+    visibility_sm = None
+    if isinstance(visibility_m, (int, float)):
+        visibility_sm = round(float(visibility_m) / 1609.344, 2)
+
+    wind_dir = metar.get("wind_dir")
+    if wind_dir == -1:
+        wind_dir = "VRB"
+
+    return {
+        "icao": str(
+            metar.get("station_id")
+            or airport.get("icao")
+            or airport.get("id")
+            or fallback_station
+        ).upper(),
+        "name": airport.get("name") or metar.get("station_name"),
+        "observed": observed,
+        "flight_category": (metar.get("code") or "UNKNOWN").upper(),
+        "wind_direction": wind_dir,
+        "wind_speed_kt": metar.get("wind_speed"),
+        "wind_gust_kt": metar.get("wind_gust"),
+        "visibility_sm": visibility_sm,
+        "temperature_c": metar.get("temperature"),
+        "dewpoint_c": metar.get("dewpoint"),
+        "altimeter_hpa": metar.get("qnh"),
+        "weather": metar.get("weather") or "",
+        "clouds": clouds,
+        "raw": metar.get("raw") or "",
+    }
+
+
+async def fetch_metar_taf_station(
+    client: httpx.AsyncClient,
+    station: str,
+    semaphore: asyncio.Semaphore,
+) -> dict[str, Any]:
+    """Récupère un METAR metar-taf.com (l'API ne fait pas de batch)."""
+    async with semaphore:
+        response = await client.get(
+            "https://api.metar-taf.com/metar",
+            params={
+                "api_key": METAR_TAF_API_KEY,
+                "v": "2.3",
+                "locale": "fr-FR",
+                "id": station,
+            },
+            headers={"User-Agent": "radardesk/1.0 (local monitoring)"},
+        )
+    if response.status_code != 200:
+        raise ValueError(f"metar-taf.com HTTP {response.status_code}")
+    payload = response.json()
+    if not isinstance(payload, dict) or not payload.get("status"):
+        message = payload.get("message") if isinstance(payload, dict) else None
+        raise ValueError(f"metar-taf.com: {message or 'réponse invalide'}")
+    return clean_metar_taf(payload, station)
+
+
 @app.get("/api/weather/metar", tags=["weather"])
 async def api_weather_metar(
     request: Request, ids: str = Query(default="")
@@ -922,7 +1035,28 @@ async def api_weather_metar(
                 missing.append(station)
 
         stale = False
-        if missing:
+        if missing and METAR_PROVIDER == "metar_taf":
+            if not METAR_TAF_API_KEY:
+                raise HTTPException(
+                    status_code=503,
+                    detail="METAR_TAF_API_KEY n'est pas configuré.",
+                )
+            semaphore = asyncio.Semaphore(4)
+            results = await asyncio.gather(
+                *(
+                    fetch_metar_taf_station(request.app.state.http, station, semaphore)
+                    for station in missing
+                ),
+                return_exceptions=True,
+            )
+            fetched_at = time.monotonic()
+            for station, result in zip(missing, results):
+                if isinstance(result, Exception):
+                    stale = True
+                    continue
+                _metar_cache[station] = (fetched_at, result)
+                stations[station] = result
+        elif missing:
             try:
                 response = await request.app.state.http.get(
                     "https://aviationweather.gov/api/data/metar",
@@ -952,7 +1086,7 @@ async def api_weather_metar(
             except (httpx.HTTPError, ValueError):
                 stale = True
 
-        # Conserve les anciennes observations si NOAA est momentanément indisponible.
+        # Conserve les anciennes observations si le fournisseur est indisponible.
         for station in requested:
             if station not in stations:
                 cached = _metar_cache.get(station)
@@ -963,7 +1097,9 @@ async def api_weather_metar(
     return {
         "stations": stations,
         "stale": stale,
-        "source": "aviationweather.gov",
+        "source": "metar-taf.com"
+        if METAR_PROVIDER == "metar_taf"
+        else "aviationweather.gov",
     }
 
 

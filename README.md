@@ -203,6 +203,8 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
+| `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather` ou `metar_taf` |
+| `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
 | `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
 
 Appliquer une modification :
@@ -321,8 +323,8 @@ Le service `admin` est séparé du backend radar :
 - interface web sombre et responsive sur `http://<hôte>:8082` ;
 - HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
 - état du radar : source, cache, nombre de cibles, configuration active ;
-- modification à chaud de la position, des portées, du cache, de la cadence et
-  des sources ADS-B ;
+- modification à chaud de la position, des portées, du cache, de la cadence,
+  des sources ADS-B et de la source METAR ;
 - persistance dans le volume Docker `radardesk_admin_data` ;
 - bouton **Recharger** et **Réinitialiser** vers les variables d'environnement.
 
@@ -435,9 +437,13 @@ La génération et le filtrage du jeu de données sont décrits dans
 
 Deux couches météo sont disponibles :
 
-- **METAR aéroports** via
-  [Aviation Weather Center / NOAA](https://aviationweather.gov/) :
-  catégorie de vol VFR/MVFR/IFR/LIFR, vent, visibilité, plafond, température,
+- **METAR aéroports** avec deux fournisseurs sélectionnables depuis
+  l'administration :
+  - [Aviation Weather Center / NOAA](https://aviationweather.gov/data/api/) par défaut,
+    sans clé API ;
+  - [metar-taf.com](https://metar-taf.com/docs/) via `METAR_TAF_API_KEY`
+    (un crédit API par station interrogée).
+  Catégorie de vol VFR/MVFR/IFR/LIFR, vent, visibilité, plafond, température,
   QNH et message brut. Cliquer sur un aéroport ouvre la fiche météo.
 - **Précipitations animées** via
   [RainViewer](https://www.rainviewer.com/api.html) : dernières images radar,
@@ -446,6 +452,21 @@ Deux couches météo sont disponibles :
 
 Le backend met en cache les METAR 10 minutes et les métadonnées RainViewer
 2 minutes. Les tuiles radar sont chargées directement par le navigateur.
+
+Pour activer metar-taf.com :
+
+```dotenv
+ADSB_METAR_PROVIDER=metar_taf
+METAR_TAF_API_KEY=votre_cle_api
+```
+
+Puis :
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+Le sélecteur de source METAR est ensuite disponible dans l'administration.
 
 ## Notes de performance
 

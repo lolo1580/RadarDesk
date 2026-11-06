@@ -290,6 +290,18 @@ select {
   cursor: pointer;
 }
 
+.field-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--dim);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.field-note.is-off {
+  color: var(--amber);
+}
+
 .hint {
   margin: 17px 0 0;
   color: var(--dim);
