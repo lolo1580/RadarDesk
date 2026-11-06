@@ -82,6 +82,8 @@
   const state = {
     config: { ...DEFAULT_CONFIG },
     rawAircraft: [],
+    airports: [],
+    visibleAirports: [],
     targets: [],
     byHex: new Map(),
     focusedHex: null,
@@ -594,8 +596,9 @@
     if (rangeConfigChanged) {
       updateRangeButtons();
     }
-    if (changed) {
+    if (changed || rangeConfigChanged) {
       updateHud();
+      rebuildAirportGeometry();
       if (view.ready) {
         rebuildBackground();
         layoutTargets();
@@ -870,6 +873,111 @@
 
     sweepCanvas = layer;
     sweepCanvasSize = cssSize;
+  }
+
+  /* ========================================================================
+     Rendu Canvas : aéroports
+     ======================================================================== */
+
+  function rebuildAirportGeometry() {
+    if (!state.airports.length) {
+      state.visibleAirports = [];
+      return;
+    }
+
+    const maxRange = Math.max(1, state.config.maxDistNm);
+    const visible = [];
+
+    for (const airport of state.airports) {
+      const distance = distanceNm(
+        state.config.lat,
+        state.config.lon,
+        airport.lat,
+        airport.lon,
+      );
+      if (!Number.isFinite(distance) || distance > maxRange) {
+        continue;
+      }
+      const bearing = bearingDeg(
+        state.config.lat,
+        state.config.lon,
+        airport.lat,
+        airport.lon,
+      );
+      visible.push({
+        ...airport,
+        distance,
+        bearingRad: bearing * DEG,
+      });
+    }
+
+    visible.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === "large_airport" ? -1 : 1;
+      }
+      return a.distance - b.distance;
+    });
+    state.visibleAirports = visible;
+  }
+
+  function drawAirports() {
+    if (!state.visibleAirports.length) {
+      return;
+    }
+
+    const rangeNm = Math.max(1, state.config.distNm);
+    const { cx, cy, radius: R, width } = view;
+    ctx.textBaseline = "middle";
+
+    for (const airport of state.visibleAirports) {
+      if (airport.distance > rangeNm) {
+        continue;
+      }
+
+      const distancePx = (airport.distance / rangeNm) * R;
+      const x = cx + Math.sin(airport.bearingRad) * distancePx;
+      const y = cy - Math.cos(airport.bearingRad) * distancePx;
+      const isLarge = airport.type === "large_airport";
+      const size = isLarge ? 3.4 : 2.7;
+      const alpha = isLarge ? 0.64 : 0.4;
+
+      ctx.strokeStyle = `rgba(86, 224, 240, ${alpha})`;
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(x - size, y - size, size * 2, size * 2);
+      ctx.beginPath();
+      ctx.moveTo(x - 1.2, y);
+      ctx.lineTo(x + 1.2, y);
+      ctx.moveTo(x, y - 1.2);
+      ctx.lineTo(x, y + 1.2);
+      ctx.stroke();
+
+      const showLabel = isLarge || rangeNm <= 100 || airport.distance <= 40;
+      if (!showLabel) {
+        continue;
+      }
+
+      const label = airport.iata
+        ? `${airport.iata}/${airport.icao}`
+        : airport.icao;
+      const labelWidth = label.length * view.detailFont * 0.63;
+      let align = x < cx ? "left" : "right";
+      if (align === "left" && x + size + 6 + labelWidth > width - 4) {
+        align = "right";
+      } else if (align === "right" && x - size - 6 - labelWidth < 4) {
+        align = "left";
+      }
+      const tx = x + (align === "left" ? size + 5 : -size - 5);
+
+      ctx.textAlign = align;
+      ctx.font = `700 ${Math.max(7.4, view.detailFont - 0.2)}px ${FONT_STACK}`;
+      ctx.fillStyle = isLarge
+        ? "rgba(150, 250, 255, 0.78)"
+        : "rgba(104, 232, 243, 0.55)";
+      ctx.fillText(label, tx, y - 0.5);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "left";
   }
 
   /* ========================================================================
@@ -1265,6 +1373,7 @@
       ctx.restore();
     }
 
+    drawAirports();
     drawTargets(phase);
   }
 
@@ -1521,6 +1630,44 @@
     state.pollTimer = window.setTimeout(poll, state.config.refreshMs);
   }
 
+  async function loadAirports() {
+    try {
+      const response = await fetch("/static/data/airports.json", {
+        cache: "force-cache",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        return;
+      }
+      const rows = await response.json();
+      if (!Array.isArray(rows)) {
+        return;
+      }
+      state.airports = rows
+        .filter(
+          (row) =>
+            Array.isArray(row) &&
+            row.length >= 6 &&
+            typeof row[0] === "string" &&
+            Number.isFinite(Number(row[4])) &&
+            Number.isFinite(Number(row[5])),
+        )
+        .map((row) => ({
+          icao: row[0],
+          iata: row[1] || "",
+          name: row[2] || "",
+          type: row[3] === "large_airport" ? "large_airport" : "medium_airport",
+          lat: Number(row[4]),
+          lon: Number(row[5]),
+        }));
+      rebuildAirportGeometry();
+    } catch {
+      // Les aéroports sont un décor optionnel : le radar reste fonctionnel.
+      state.airports = [];
+      state.visibleAirports = [];
+    }
+  }
+
   async function loadConfig() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 4000);
@@ -1570,6 +1717,7 @@
 
       updateHud();
       updateRangeButtons();
+      rebuildAirportGeometry();
       if (view.ready) {
         rebuildBackground();
         layoutTargets();
@@ -1651,5 +1799,6 @@
   updateRangeButtons();
   setStreamState("connecting", "ACQUISITION");
   startFrameLoop();
+  loadAirports();
   loadConfig().finally(poll);
 })();

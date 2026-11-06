@@ -14,6 +14,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Grain phosphore, réflexion de verre et balayage CRT très lent.
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
+- Aéroports majeurs et moyens en cyan, avec codes IATA/OACI, filtrés selon la portée.
 - Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
   En portrait, le réglage est intégré à l'en-tête des contacts prioritaires.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
@@ -93,7 +94,10 @@ RadarDesk/
         ├── style.css
         ├── radar.js
         ├── icon.svg
-        └── manifest.webmanifest
+        ├── manifest.webmanifest
+        └── data/
+            ├── airports.json
+            └── README.txt
 ```
 
 ## Démarrage rapide
@@ -403,6 +407,17 @@ statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
   `ADSB_ADMIN_PASSWORD` dans `.env`, puis recréer le service `admin`.
 - **Port 8082 occupé** : modifier `ADSB_ADMIN_PORT` dans `.env`, puis
   `docker compose up -d --force-recreate admin`.
+
+## Aéroports
+
+Les aéroports sont embarqués localement dans `frontend/static/data/airports.json`.
+Ils sont affichés en cyan avec les codes IATA/OACI dans la portée d'affichage
+courante. Les gros aéroports restent étiquetés à grande portée ; les aéroports
+moyens sont étiquetés en priorité à courte portée pour éviter la surcharge.
+
+Source : [OurAirports](https://ourairports.com/data/), données du domaine public.
+La génération et le filtrage du jeu de données sont décrits dans
+`frontend/static/data/README.txt`.
 
 ## Notes de performance
 
