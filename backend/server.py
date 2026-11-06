@@ -59,6 +59,11 @@ CACHE_TTL_S = float(os.getenv("ADSB_CACHE_TTL", "4.0"))
 STALE_TTL_S = float(os.getenv("ADSB_STALE_TTL", "120"))
 UPSTREAM_FAILURE_BACKOFF_S = float(os.getenv("ADSB_FAILURE_BACKOFF", "5.0"))
 
+# Météo aviation : METAR/TAF et frames radar RainViewer.
+METAR_CACHE_TTL_S = float(os.getenv("ADSB_METAR_CACHE_TTL", "600"))
+WEATHER_RADAR_CACHE_TTL_S = float(os.getenv("ADSB_WEATHER_RADAR_CACHE_TTL", "120"))
+WEATHER_MAX_STATIONS = 120
+
 # Timeout d'un appel upstream (secondes).
 UPSTREAM_TIMEOUT_S = float(os.getenv("ADSB_TIMEOUT", "4.0"))
 
@@ -213,6 +218,9 @@ _primary_blocked_until = 0.0
 _upstream_retry_after = 0.0
 _last_upstream_error: str | None = None
 _runtime_config_active = False
+_metar_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_weather_radar_cache: tuple[float, dict[str, Any]] | None = None
+_weather_lock = asyncio.Lock()
 
 # ============================================================================
 # CONFIGURATION RUNTIME (ADMINISTRATION)
@@ -854,6 +862,168 @@ async def api_health() -> dict[str, Any]:
         "config_source": "runtime" if _runtime_config_active else "environment",
         "max_radius_nm": MAX_RADIUS_NM,
     }
+
+
+def clean_metar(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise une observation METAR pour le frontend."""
+    clouds = []
+    for cloud in raw.get("clouds") or []:
+        if not isinstance(cloud, dict):
+            continue
+        clouds.append(
+            {
+                "cover": cloud.get("cover"),
+                "base_ft": cloud.get("base"),
+            }
+        )
+
+    return {
+        "icao": raw.get("icaoId"),
+        "name": raw.get("name"),
+        "observed": raw.get("reportTime"),
+        "flight_category": (raw.get("fltCat") or "UNKNOWN").upper(),
+        "wind_direction": raw.get("wdir"),
+        "wind_speed_kt": raw.get("wspd"),
+        "wind_gust_kt": raw.get("wgst"),
+        "visibility_sm": raw.get("visib"),
+        "temperature_c": raw.get("temp"),
+        "dewpoint_c": raw.get("dewp"),
+        "altimeter_hpa": raw.get("altim"),
+        "weather": raw.get("wxString") or "",
+        "clouds": clouds,
+        "raw": raw.get("rawOb") or "",
+    }
+
+
+@app.get("/api/weather/metar", tags=["weather"])
+async def api_weather_metar(
+    request: Request, ids: str = Query(default="")
+) -> dict[str, Any]:
+    """Proxy METAR avec cache par station pour les aéroports demandés."""
+    requested: list[str] = []
+    for item in ids.split(","):
+        station = item.strip().upper()
+        if re.fullmatch(r"[A-Z0-9]{3,5}", station) and station not in requested:
+            requested.append(station)
+    requested = requested[:WEATHER_MAX_STATIONS]
+
+    if not requested:
+        return {"stations": {}, "stale": False, "source": "aviationweather.gov"}
+
+    now = time.monotonic()
+    stations: dict[str, dict[str, Any]] = {}
+    missing: list[str] = []
+    async with _weather_lock:
+        for station in requested:
+            cached = _metar_cache.get(station)
+            if cached is not None and now - cached[0] <= METAR_CACHE_TTL_S:
+                stations[station] = cached[1]
+            else:
+                missing.append(station)
+
+        stale = False
+        if missing:
+            try:
+                response = await request.app.state.http.get(
+                    "https://aviationweather.gov/api/data/metar",
+                    params={
+                        "ids": ",".join(missing),
+                        "format": "json",
+                        "hours": "2",
+                    },
+                    headers={"User-Agent": "radardesk/1.0 (local monitoring)"},
+                )
+                if response.status_code == 200:
+                    payload = response.json()
+                    if isinstance(payload, list):
+                        fetched_at = time.monotonic()
+                        for raw in payload:
+                            if not isinstance(raw, dict):
+                                continue
+                            icao = str(raw.get("icaoId") or "").upper()
+                            if not icao:
+                                continue
+                            cleaned = clean_metar(raw)
+                            _metar_cache[icao] = (fetched_at, cleaned)
+                            if icao in requested:
+                                stations[icao] = cleaned
+                else:
+                    stale = True
+            except (httpx.HTTPError, ValueError):
+                stale = True
+
+        # Conserve les anciennes observations si NOAA est momentanément indisponible.
+        for station in requested:
+            if station not in stations:
+                cached = _metar_cache.get(station)
+                if cached is not None:
+                    stations[station] = cached[1]
+                    stale = True
+
+    return {
+        "stations": stations,
+        "stale": stale,
+        "source": "aviationweather.gov",
+    }
+
+
+@app.get("/api/weather/radar", tags=["weather"])
+async def api_weather_radar(request: Request) -> dict[str, Any]:
+    """Métadonnées RainViewer pour la couche de précipitations animée."""
+    global _weather_radar_cache
+
+    now = time.monotonic()
+    if (
+        _weather_radar_cache is not None
+        and now - _weather_radar_cache[0] <= WEATHER_RADAR_CACHE_TTL_S
+    ):
+        return _weather_radar_cache[1]
+
+    async with _weather_lock:
+        now = time.monotonic()
+        if (
+            _weather_radar_cache is not None
+            and now - _weather_radar_cache[0] <= WEATHER_RADAR_CACHE_TTL_S
+        ):
+            return _weather_radar_cache[1]
+
+        try:
+            response = await request.app.state.http.get(
+                "https://api.rainviewer.com/public/weather-maps.json",
+                headers={"User-Agent": "radardesk/1.0 (local monitoring)"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            radar = payload.get("radar") if isinstance(payload, dict) else None
+            if not isinstance(radar, dict):
+                raise TypeError("Radar RainViewer absent.")
+
+            frames = []
+            for frame in (radar.get("past") or [])[-7:]:
+                if isinstance(frame, dict) and frame.get("path"):
+                    frames.append({"time": frame.get("time"), "path": frame["path"]})
+            for frame in (radar.get("nowcast") or [])[:2]:
+                if isinstance(frame, dict) and frame.get("path"):
+                    frames.append({"time": frame.get("time"), "path": frame["path"]})
+
+            result = {
+                "host": payload.get("host"),
+                "generated": payload.get("generated"),
+                "frames": frames,
+                "source": "rainviewer.com",
+                "stale": False,
+            }
+            _weather_radar_cache = (time.monotonic(), result)
+            return result
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            if _weather_radar_cache is not None:
+                cached = dict(_weather_radar_cache[1])
+                cached["stale"] = True
+                return cached
+            raise HTTPException(
+                status_code=502,
+                detail=f"Radar météo indisponible: {exc.__class__.__name__}.",
+            ) from exc
 
 
 @app.post("/internal/reload", include_in_schema=False)

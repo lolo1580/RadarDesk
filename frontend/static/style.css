@@ -262,6 +262,125 @@ button {
   font-weight: 700;
 }
 
+.weather-card {
+  position: absolute;
+  top: clamp(52px, 9vh, 78px);
+  right: clamp(10px, 1.7vw, 20px);
+  z-index: 12;
+  width: min(310px, calc(100% - 24px));
+  padding: 12px 13px;
+  background: rgba(3, 10, 6, 0.95);
+  border: 1px solid rgba(77, 216, 232, 0.5);
+  box-shadow: 0 0 28px rgba(0, 0, 0, 0.65), inset 0 0 20px rgba(77, 216, 232, 0.025);
+}
+
+.weather-card[hidden] {
+  display: none;
+}
+
+.weather-card__close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--muted);
+  font: 16px/1 var(--mono);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.weather-card__close:hover,
+.weather-card__close:focus-visible {
+  color: var(--cyan, #4dd8e8);
+  outline: none;
+}
+
+.weather-card__kicker {
+  margin: 0 22px 3px 0;
+  color: var(--muted);
+  font-size: 7px;
+  letter-spacing: 0.15em;
+}
+
+#weatherCategory {
+  color: #4dd8e8;
+  font-weight: 700;
+}
+
+.weather-card__title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0 0 9px;
+  color: #a8f6ff;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+}
+
+.weather-card__title small {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weather-card__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(77, 216, 232, 0.14);
+  border-bottom: 1px solid rgba(77, 216, 232, 0.14);
+}
+
+.weather-card__grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.weather-card__grid span {
+  color: var(--faint);
+  font-size: 6.5px;
+  letter-spacing: 0.12em;
+}
+
+.weather-card__grid strong {
+  overflow: hidden;
+  color: #b8ffd0;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weather-card__raw {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 7px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+@media (max-width: 520px) {
+  .weather-card {
+    top: auto;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+  }
+}
+
 .range-control--console {
   display: none;
 }

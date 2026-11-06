@@ -15,6 +15,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Aéroports majeurs et moyens en cyan, avec codes IATA/OACI, filtrés selon la portée.
+- Météo aviation : badges METAR VFR/MVFR/IFR/LIFR et fiche détaillée au clic.
+- Couche de précipitations animée RainViewer, filtrée selon la portée.
 - Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
   En portrait, le réglage est intégré à l'en-tête des contacts prioritaires.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
@@ -295,6 +297,16 @@ rafraîchissement et sources.
 État du cache sans appel upstream. Utilisé aussi par le healthcheck Docker du
 backend.
 
+### `GET /api/weather/metar?ids=LSGG,LSZH`
+
+Proxy METAR avec cache par station. Retourne les observations normalisées des
+aéroports demandés.
+
+### `GET /api/weather/radar`
+
+Métadonnées des dernières frames RainViewer (host, frames, horodatage), avec
+cache court côté backend.
+
 ### `POST /internal/reload`
 
 Endpoint interne non exposé par Nginx. Il recharge le fichier
@@ -418,6 +430,22 @@ moyens sont étiquetés en priorité à courte portée pour éviter la surcharge
 Source : [OurAirports](https://ourairports.com/data/), données du domaine public.
 La génération et le filtrage du jeu de données sont décrits dans
 `frontend/static/data/README.txt`.
+
+## Météo
+
+Deux couches météo sont disponibles :
+
+- **METAR aéroports** via
+  [Aviation Weather Center / NOAA](https://aviationweather.gov/) :
+  catégorie de vol VFR/MVFR/IFR/LIFR, vent, visibilité, plafond, température,
+  QNH et message brut. Cliquer sur un aéroport ouvre la fiche météo.
+- **Précipitations animées** via
+  [RainViewer](https://www.rainviewer.com/api.html) : dernières images radar,
+  filtrées pour ne conserver que les échos de précipitations significatifs.
+  La couche est recadrée sur le scope et suit la portée et le centre courants.
+
+Le backend met en cache les METAR 10 minutes et les métadonnées RainViewer
+2 minutes. Les tuiles radar sont chargées directement par le navigateur.
 
 ## Notes de performance
 

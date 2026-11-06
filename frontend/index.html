@@ -50,7 +50,27 @@
         <div class="hud-foot">
           <span>SWEEP <b>4.0</b> S</span>
           <span>PPI <b>NORTH-UP</b></span>
+          <span>WX <b id="wxState">OFF</b></span>
         </div>
+
+        <section class="weather-card" id="weatherCard" hidden aria-live="polite">
+          <button class="weather-card__close" id="weatherClose" type="button"
+                  aria-label="Fermer la météo">&times;</button>
+          <p class="weather-card__kicker">METAR / <span id="weatherCategory">—</span></p>
+          <h3 class="weather-card__title">
+            <span id="weatherCode">—</span>
+            <small id="weatherName"></small>
+          </h3>
+          <div class="weather-card__grid">
+            <div><span>VENT</span><strong id="weatherWind">—</strong></div>
+            <div><span>VISIBILITÉ</span><strong id="weatherVisibility">—</strong></div>
+            <div><span>PLAFOND</span><strong id="weatherCeiling">—</strong></div>
+            <div><span>TEMP / ROSÉE</span><strong id="weatherTemp">—</strong></div>
+            <div><span>QNH</span><strong id="weatherQnh">—</strong></div>
+            <div><span>OBSERVÉ</span><strong id="weatherObserved">—</strong></div>
+          </div>
+          <p class="weather-card__raw" id="weatherRaw">—</p>
+        </section>
       </div>
     </main>
 

@@ -12,6 +12,15 @@
   const ECHO_HISTORY_LENGTH = 3;
   const RANGE_STEPS = [10, 25, 50, 75, 100, 125, 150, 200, 250];
   const RANGE_STORAGE_KEY = "radardesk.rangeNm";
+  const WEATHER_REFRESH_MS = 5 * 60 * 1000;
+  const WEATHER_TILE_FRAME_MS = 900;
+  const WEATHER_COLORS = {
+    VFR: "#49e58b",
+    MVFR: "#4da3ff",
+    IFR: "#ff5464",
+    LIFR: "#d36bff",
+    UNKNOWN: "#7c8b9a",
+  };
   const FONT_STACK = '"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
   const DEFAULT_CONFIG = Object.freeze({
@@ -68,6 +77,19 @@
     lastUpdate: document.getElementById("lastUpdate"),
     hudCoords: document.getElementById("hudCoords"),
     hudLink: document.getElementById("hudLink"),
+    wxState: document.getElementById("wxState"),
+    weatherCard: document.getElementById("weatherCard"),
+    weatherClose: document.getElementById("weatherClose"),
+    weatherCategory: document.getElementById("weatherCategory"),
+    weatherCode: document.getElementById("weatherCode"),
+    weatherName: document.getElementById("weatherName"),
+    weatherWind: document.getElementById("weatherWind"),
+    weatherVisibility: document.getElementById("weatherVisibility"),
+    weatherCeiling: document.getElementById("weatherCeiling"),
+    weatherTemp: document.getElementById("weatherTemp"),
+    weatherQnh: document.getElementById("weatherQnh"),
+    weatherObserved: document.getElementById("weatherObserved"),
+    weatherRaw: document.getElementById("weatherRaw"),
   };
 
   const ctx = dom.canvas.getContext("2d", { alpha: false, desynchronized: true });
@@ -84,6 +106,10 @@
     rawAircraft: [],
     airports: [],
     visibleAirports: [],
+    airportWeather: new Map(),
+    weatherSignature: "",
+    weatherFetchedAt: 0,
+    focusedAirport: null,
     targets: [],
     byHex: new Map(),
     focusedHex: null,
@@ -116,6 +142,18 @@
   let sweepCanvasSize = 0;
   let resizeObserver = null;
   let wakeLock = null;
+
+  const weatherRadar = {
+    host: null,
+    frames: [],
+    signature: "",
+    index: 0,
+    zoom: null,
+    tiles: new Map(),
+    canvas: null,
+    dirty: true,
+    lastFrameAt: 0,
+  };
 
   /* ========================================================================
      Utilitaires
@@ -436,6 +474,9 @@
 
   function setFocusedTarget(hex) {
     state.focusedHex = hex || null;
+    if (state.focusedHex) {
+      hideWeatherCard();
+    }
     const buttons = dom.contactList.querySelectorAll(".contact");
     for (const button of buttons) {
       button.setAttribute("aria-pressed", String(button.dataset.hex === state.focusedHex));
@@ -549,8 +590,18 @@
     if (view.ready) {
       rebuildBackground();
     }
+    if (state.focusedAirport) {
+      const focused = state.visibleAirports.find(
+        (airport) => airport.icao === state.focusedAirport,
+      );
+      if (!focused || focused.distance > next) {
+        hideWeatherCard();
+      }
+    }
     // Les données jusqu'à la portée maximale sont déjà dans state.rawAircraft.
     applyAircraftList(null, false);
+    refreshAirportWeather();
+    weatherRadar.dirty = true;
   }
 
   function shiftRange(direction) {
@@ -599,6 +650,7 @@
     if (changed || rangeConfigChanged) {
       updateHud();
       rebuildAirportGeometry();
+      weatherRadar.dirty = true;
       if (view.ready) {
         rebuildBackground();
         layoutTargets();
@@ -918,6 +970,198 @@
       return a.distance - b.distance;
     });
     state.visibleAirports = visible;
+
+    if (
+      state.focusedAirport &&
+      !visible.some(
+        (airport) =>
+          airport.icao === state.focusedAirport &&
+          airport.distance <= state.config.distNm,
+      )
+    ) {
+      hideWeatherCard();
+    }
+    refreshAirportWeather();
+  }
+
+  function weatherColor(category) {
+    return WEATHER_COLORS[category] || WEATHER_COLORS.UNKNOWN;
+  }
+
+  function formatMetarTime(value) {
+    if (!value) {
+      return "—";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    return `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}Z`;
+  }
+
+  function ceilingLabel(metar) {
+    for (const cloud of metar.clouds || []) {
+      if (
+        ["BKN", "OVC", "VV"].includes(cloud.cover) &&
+        cloud.base_ft !== null &&
+        cloud.base_ft !== undefined
+      ) {
+        return `${cloud.cover} ${cloud.base_ft} ft`;
+      }
+    }
+    return "—";
+  }
+
+  function windLabel(metar) {
+    const direction =
+      metar.wind_direction === "VRB"
+        ? "VRB"
+        : metar.wind_direction !== null && metar.wind_direction !== undefined
+          ? `${metar.wind_direction}°`
+          : "—";
+    const speed =
+      metar.wind_speed_kt !== null && metar.wind_speed_kt !== undefined
+        ? `${metar.wind_speed_kt} kt`
+        : "—";
+    const gust = metar.wind_gust_kt ? ` G${metar.wind_gust_kt}` : "";
+    return `${direction} / ${speed}${gust}`;
+  }
+
+  async function refreshAirportWeather(force = false) {
+    const rangeNm = state.config.distNm;
+    const ids = [
+      ...new Set(
+        state.visibleAirports
+          .filter((airport) => airport.distance <= rangeNm && airport.icao)
+          .map((airport) => airport.icao),
+      ),
+    ].sort();
+    const signature = ids.join(",");
+    const now = Date.now();
+
+    if (
+      !force &&
+      signature === state.weatherSignature &&
+      now - state.weatherFetchedAt < WEATHER_REFRESH_MS
+    ) {
+      return;
+    }
+
+    state.weatherSignature = signature;
+    if (!ids.length) {
+      state.airportWeather.clear();
+      state.weatherFetchedAt = now;
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/weather/metar?ids=${encodeURIComponent(signature)}`,
+        {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      if (payload && payload.stations && typeof payload.stations === "object") {
+        state.airportWeather = new Map(Object.entries(payload.stations));
+      }
+    } catch {
+      // La météo aéroport est optionnelle : le scope reste opérationnel.
+    } finally {
+      state.weatherFetchedAt = Date.now();
+    }
+  }
+
+  function hideWeatherCard() {
+    state.focusedAirport = null;
+    if (dom.weatherCard) {
+      dom.weatherCard.hidden = true;
+    }
+  }
+
+  function showWeatherCard(airport) {
+    const metar = state.airportWeather.get(airport.icao);
+    state.focusedAirport = airport.icao;
+    const category = metar?.flight_category || "N/A";
+    const color = metar ? weatherColor(metar.flight_category) : WEATHER_COLORS.UNKNOWN;
+
+    setText(dom.weatherCode, airport.iata ? `${airport.iata}/${airport.icao}` : airport.icao);
+    setText(dom.weatherName, airport.name || "");
+    setText(dom.weatherCategory, category);
+    dom.weatherCategory.style.color = color;
+
+    if (metar) {
+      setText(dom.weatherWind, windLabel(metar));
+      setText(
+        dom.weatherVisibility,
+        metar.visibility_sm !== null && metar.visibility_sm !== undefined
+          ? `${metar.visibility_sm} SM`
+          : "—",
+      );
+      setText(dom.weatherCeiling, ceilingLabel(metar));
+      setText(
+        dom.weatherTemp,
+        metar.temperature_c !== null && metar.temperature_c !== undefined
+          ? `${metar.temperature_c}° / ${metar.dewpoint_c ?? "—"}°`
+          : "—",
+      );
+      setText(
+        dom.weatherQnh,
+        metar.altimeter_hpa !== null && metar.altimeter_hpa !== undefined
+          ? `${metar.altimeter_hpa} hPa`
+          : "—",
+      );
+      setText(dom.weatherObserved, formatMetarTime(metar.observed));
+      setText(dom.weatherRaw, metar.raw || "—");
+    } else {
+      for (const node of [
+        dom.weatherWind,
+        dom.weatherVisibility,
+        dom.weatherCeiling,
+        dom.weatherTemp,
+        dom.weatherQnh,
+        dom.weatherObserved,
+      ]) {
+        setText(node, "—");
+      }
+      setText(dom.weatherRaw, "METAR indisponible pour cette station.");
+    }
+
+    dom.weatherCard.hidden = false;
+  }
+
+  function airportAtPointer(clientX, clientY) {
+    if (!state.visibleAirports.length) {
+      return null;
+    }
+    const rect = dom.canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const thresholdSq = 18 * 18;
+    const rangeNm = Math.max(1, state.config.distNm);
+    let best = null;
+    let bestDistanceSq = thresholdSq;
+
+    for (const airport of state.visibleAirports) {
+      if (airport.distance > rangeNm) {
+        continue;
+      }
+      const distancePx = (airport.distance / rangeNm) * view.radius;
+      const x = view.cx + Math.sin(airport.bearingRad) * distancePx;
+      const y = view.cy - Math.cos(airport.bearingRad) * distancePx;
+      const dx = x - px;
+      const dy = y - py;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        best = airport;
+      }
+    }
+    return best;
   }
 
   function drawAirports() {
@@ -940,6 +1184,8 @@
       const isLarge = airport.type === "large_airport";
       const size = isLarge ? 3.4 : 2.7;
       const alpha = isLarge ? 0.64 : 0.4;
+      const metar = state.airportWeather.get(airport.icao);
+      const categoryColor = metar ? weatherColor(metar.flight_category) : null;
 
       ctx.strokeStyle = `rgba(86, 224, 240, ${alpha})`;
       ctx.lineWidth = 0.8;
@@ -950,6 +1196,11 @@
       ctx.moveTo(x, y - 1.2);
       ctx.lineTo(x, y + 1.2);
       ctx.stroke();
+
+      if (categoryColor) {
+        ctx.fillStyle = categoryColor;
+        ctx.fillRect(x + size - 1.5, y - size - 1.5, 3, 3);
+      }
 
       const showLabel = isLarge || rangeNm <= 100 || airport.distance <= 40;
       if (!showLabel) {
@@ -970,14 +1221,240 @@
 
       ctx.textAlign = align;
       ctx.font = `700 ${Math.max(7.4, view.detailFont - 0.2)}px ${FONT_STACK}`;
-      ctx.fillStyle = isLarge
-        ? "rgba(150, 250, 255, 0.78)"
-        : "rgba(104, 232, 243, 0.55)";
+      if (categoryColor) {
+        ctx.globalAlpha = isLarge ? 0.9 : 0.72;
+        ctx.fillStyle = categoryColor;
+      } else {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isLarge
+          ? "rgba(150, 250, 255, 0.78)"
+          : "rgba(104, 232, 243, 0.55)";
+      }
       ctx.fillText(label, tx, y - 0.5);
+    }
+
+    if (state.focusedAirport) {
+      const focused = state.visibleAirports.find(
+        (airport) =>
+          airport.icao === state.focusedAirport &&
+          airport.distance <= rangeNm,
+      );
+      if (focused) {
+        const distancePx = (focused.distance / rangeNm) * R;
+        const x = cx + Math.sin(focused.bearingRad) * distancePx;
+        const y = cy - Math.cos(focused.bearingRad) * distancePx;
+        const size = 11;
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = "#8cf5ff";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x - size, y - size + 4);
+        ctx.lineTo(x - size, y - size);
+        ctx.lineTo(x - size + 4, y - size);
+        ctx.moveTo(x + size - 4, y - size);
+        ctx.lineTo(x + size, y - size);
+        ctx.lineTo(x + size, y - size + 4);
+        ctx.moveTo(x - size, y + size - 4);
+        ctx.lineTo(x - size, y + size);
+        ctx.lineTo(x - size + 4, y + size);
+        ctx.moveTo(x + size - 4, y + size);
+        ctx.lineTo(x + size, y + size);
+        ctx.lineTo(x + size, y + size - 4);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     ctx.globalAlpha = 1;
     ctx.textAlign = "left";
+  }
+
+  /* ========================================================================
+     Couche météo : précipitations RainViewer
+     ======================================================================== */
+
+  function weatherZoomForRange() {
+    // RainViewer limite ses tuiles radar au niveau de zoom 7.
+    return 7;
+  }
+
+  function getWeatherTile(frame, zoom, tileX, tileY) {
+    const key = `${frame.time}:${zoom}:${tileX}:${tileY}`;
+    const existing = weatherRadar.tiles.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const record = {
+      image: new Image(),
+      canvas: null,
+      ready: false,
+      failed: false,
+    };
+    record.image.crossOrigin = "anonymous";
+    record.image.decoding = "async";
+    record.image.onload = () => {
+      // Supprime les faibles échos gris/bruns de la palette Universal Blue :
+      // on ne garde que les précipitations suffisamment colorées.
+      try {
+        const processed = document.createElement("canvas");
+        processed.width = 256;
+        processed.height = 256;
+        const procCtx = processed.getContext("2d");
+        procCtx.drawImage(record.image, 0, 0, 256, 256);
+        const pixels = procCtx.getImageData(0, 0, 256, 256);
+        const data = pixels.data;
+        for (let index = 0; index < data.length; index += 4) {
+          const alpha = data[index + 3];
+          const max = Math.max(data[index], data[index + 1], data[index + 2]);
+          const min = Math.min(data[index], data[index + 1], data[index + 2]);
+          const chroma = max - min;
+          // Élimine les échos faibles beige/gris (dBZ négatifs ou très faibles)
+          // tout en conservant les cellules bleues, jaunes, rouges et blanches.
+          if (alpha < 40 || (alpha < 175 && chroma < 80)) {
+            data[index + 3] = 0;
+          }
+        }
+        procCtx.putImageData(pixels, 0, 0);
+        record.canvas = processed;
+      } catch {
+        record.canvas = null;
+      }
+      record.ready = true;
+      weatherRadar.dirty = true;
+    };
+    record.image.onerror = () => {
+      record.failed = true;
+    };
+    record.image.src = `${weatherRadar.host}${frame.path}/256/${zoom}/${tileX}/${tileY}/2/1_0.png`;
+    weatherRadar.tiles.set(key, record);
+    return record;
+  }
+
+  function renderWeatherLayer() {
+    if (!view.ready || !weatherRadar.host || !weatherRadar.frames.length) {
+      weatherRadar.dirty = false;
+      return;
+    }
+
+    const frame =
+      weatherRadar.frames[
+        weatherRadar.index % weatherRadar.frames.length
+      ];
+    if (!frame) {
+      weatherRadar.dirty = false;
+      return;
+    }
+
+    const zoom = weatherZoomForRange();
+    if (weatherRadar.zoom !== zoom) {
+      weatherRadar.tiles.clear();
+      weatherRadar.zoom = zoom;
+    }
+
+    if (
+      !weatherRadar.canvas ||
+      weatherRadar.canvas.width !== view.width ||
+      weatherRadar.canvas.height !== view.height
+    ) {
+      weatherRadar.canvas = document.createElement("canvas");
+      weatherRadar.canvas.width = Math.max(1, view.width);
+      weatherRadar.canvas.height = Math.max(1, view.height);
+    }
+
+    const weatherCtx = weatherRadar.canvas.getContext("2d");
+    weatherCtx.clearRect(0, 0, view.width, view.height);
+
+    const latRad = state.config.lat * DEG;
+    const worldSize = 256 * Math.pow(2, zoom);
+    const metersPerWorldPixel =
+      (156543.03392 * Math.cos(latRad)) / Math.pow(2, zoom);
+    const rangeMeters = Math.max(1, state.config.distNm) * 1852;
+    const worldRange = rangeMeters / metersPerWorldPixel;
+    const scale = view.radius / worldRange;
+    const centerWorldX = ((state.config.lon + 180) / 360) * worldSize;
+    const centerWorldY =
+      ((1 -
+        Math.log(Math.tan(Math.PI / 4 + latRad / 2)) / Math.PI) /
+        2) *
+      worldSize;
+
+    const minTileX = Math.floor((centerWorldX - worldRange) / 256);
+    const maxTileX = Math.floor((centerWorldX + worldRange) / 256);
+    const minTileY = Math.floor((centerWorldY - worldRange) / 256);
+    const maxTileY = Math.floor((centerWorldY + worldRange) / 256);
+    const tileSize = 256 * scale;
+
+    weatherCtx.save();
+    weatherCtx.beginPath();
+    weatherCtx.arc(view.cx, view.cy, view.radius, 0, TAU);
+    weatherCtx.clip();
+    weatherCtx.globalAlpha = 0.56;
+
+    for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+      for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+        const tile = getWeatherTile(frame, zoom, tileX, tileY);
+        if (!tile.ready) {
+          continue;
+        }
+        const x =
+          view.cx + (tileX * 256 - centerWorldX) * scale;
+        const y =
+          view.cy + (tileY * 256 - centerWorldY) * scale;
+        weatherCtx.drawImage(tile.canvas || tile.image, x, y, tileSize, tileSize);
+      }
+    }
+    weatherCtx.restore();
+    weatherRadar.dirty = false;
+  }
+
+  function updateWeatherAnimation(timestamp) {
+    if (weatherRadar.frames.length > 1) {
+      if (timestamp - weatherRadar.lastFrameAt >= WEATHER_TILE_FRAME_MS) {
+        weatherRadar.index =
+          (weatherRadar.index + 1) % weatherRadar.frames.length;
+        weatherRadar.lastFrameAt = timestamp;
+        weatherRadar.dirty = true;
+      }
+    }
+    if (weatherRadar.dirty) {
+      renderWeatherLayer();
+    }
+  }
+
+  async function loadWeatherRadar() {
+    try {
+      const response = await fetch("/api/weather/radar", {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const frames = Array.isArray(payload.frames) ? payload.frames : [];
+      if (!payload.host || !frames.length) {
+        weatherRadar.frames = [];
+        setText(dom.wxState, "OFF");
+        return;
+      }
+
+      const signature = frames.map((frame) => frame.time).join(",");
+      if (signature !== weatherRadar.signature) {
+        weatherRadar.signature = signature;
+        weatherRadar.frames = frames;
+        weatherRadar.index = 0;
+        weatherRadar.tiles.clear();
+        weatherRadar.zoom = null;
+        weatherRadar.lastFrameAt = performance.now();
+      }
+      weatherRadar.host = payload.host;
+      weatherRadar.dirty = true;
+      setText(dom.wxState, "ON");
+    } catch {
+      setText(dom.wxState, "OFF");
+    }
   }
 
   /* ========================================================================
@@ -1351,6 +1828,10 @@
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, width, height);
 
+    if (weatherRadar.canvas) {
+      ctx.drawImage(weatherRadar.canvas, 0, 0, width, height);
+    }
+
     if (backgroundCanvas) {
       ctx.drawImage(backgroundCanvas, 0, 0, width, height);
     }
@@ -1408,6 +1889,7 @@
     const phase = (elapsed / SWEEP_PERIOD_MS) * TAU;
 
     updateClock();
+    updateWeatherAnimation(timestamp);
     if (view.ready) {
       drawFrame(phase);
     }
@@ -1464,6 +1946,8 @@
     rebuildSweep();
     layoutTargets();
     updateHud();
+    weatherRadar.canvas = null;
+    weatherRadar.dirty = true;
   }
 
   function setupResizeHandling() {
@@ -1517,9 +2001,18 @@
   }
 
   dom.canvas.addEventListener("pointerdown", (event) => {
+    const airport = airportAtPointer(event.clientX, event.clientY);
+    if (airport) {
+      setFocusedTarget(null);
+      showWeatherCard(airport);
+      return;
+    }
+    hideWeatherCard();
     const target = targetAtPointer(event.clientX, event.clientY);
     setFocusedTarget(target ? target.hex : null);
   });
+
+  dom.weatherClose.addEventListener("click", hideWeatherCard);
 
   /* ========================================================================
      API / polling
@@ -1718,6 +2211,7 @@
       updateHud();
       updateRangeButtons();
       rebuildAirportGeometry();
+      weatherRadar.dirty = true;
       if (view.ready) {
         rebuildBackground();
         layoutTargets();
@@ -1800,5 +2294,10 @@
   setStreamState("connecting", "ACQUISITION");
   startFrameLoop();
   loadAirports();
+  loadWeatherRadar();
   loadConfig().finally(poll);
+  window.setInterval(() => {
+    refreshAirportWeather(true);
+    loadWeatherRadar();
+  }, WEATHER_REFRESH_MS);
 })();
