@@ -21,8 +21,12 @@ services:
       ADSB_PRIMARY_COOLDOWN: "${ADSB_PRIMARY_COOLDOWN:-600}"
       ADSB_LOG_LEVEL: "${ADSB_LOG_LEVEL:-INFO}"
       ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-*}"
+      ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
+      ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
     expose:
       - "8000"
+    volumes:
+      - admin_data:/data:ro
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -70,3 +74,51 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    environment:
+      ADMIN_HOST: "0.0.0.0"
+      ADMIN_PORT: "8000"
+      ADSB_ADMIN_USER: "${ADSB_ADMIN_USER:-admin}"
+      ADSB_ADMIN_PASSWORD: "${ADSB_ADMIN_PASSWORD:?Definir ADSB_ADMIN_PASSWORD dans .env}"
+      ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
+      ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
+      RADAR_BACKEND_URL: http://backend:8000
+      RADAR_PUBLIC_PORT: "${ADSB_HTTP_PORT:-8000}"
+      ADSB_LOG_LEVEL: "${ADSB_LOG_LEVEL:-INFO}"
+    ports:
+      - "${ADSB_ADMIN_PORT:-8082}:8000"
+    volumes:
+      - admin_data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  admin_data:

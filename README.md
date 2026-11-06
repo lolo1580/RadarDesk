@@ -1,8 +1,8 @@
 # RadarDesk — Radar ADS-B Docker
 
 **RadarDesk** est un scope radar militaire / CRT en HTML5 Canvas, avec un
-backend FastAPI et un frontend statique servi par Nginx, le tout orchestré par
-Docker Compose.
+backend FastAPI, un frontend statique servi par Nginx et un service
+d'administration séparé, le tout orchestré par Docker Compose.
 
 Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 
@@ -18,6 +18,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   En portrait, le réglage est intégré à l'en-tête des contacts prioritaires.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
+- Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Cache serveur de 2,5 s, polling frontend de 3 s.
 - Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
@@ -50,10 +51,16 @@ Navigateur / Morph Browser
       ▼                ▼
 Airplanes.live     adsb.lol
 (source primaire)  (secours)
+
+┌───────────────────────────┐       volume partagé /data
+│ admin                     │◄──────── runtime.json ────────┐
+│ FastAPI :8000 → hôte 8082 │                             │
+│ Basic Auth + UI de config │────► backend /internal/reload┘
+└───────────────────────────┘
 ```
 
-Seul le conteneur `frontend` est exposé sur la machine hôte. Le backend n'est
-pas accessible directement depuis l'extérieur du réseau Docker.
+Le frontend et l'administration sont exposés sur la machine hôte. Le backend
+radar n'est pas accessible directement depuis l'extérieur du réseau Docker.
 
 ## Arborescence
 
@@ -68,6 +75,15 @@ RadarDesk/
 │   ├── .dockerignore
 │   ├── requirements.txt
 │   └── server.py
+├── admin/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── requirements.txt
+│   ├── server.py
+│   └── static/
+│       ├── index.html
+│       ├── style.css
+│       └── admin.js
 └── frontend/
     ├── Dockerfile
     ├── .dockerignore
@@ -88,8 +104,9 @@ Prérequis : Docker Engine et le plugin Docker Compose.
 git clone https://github.com/lolo1580/RadarDesk.git
 cd RadarDesk
 
-# Facultatif : personnaliser la configuration
+# Obligatoire pour l'administration : personnaliser les secrets
 cp .env.example .env
+# Remplacer impérativement ADSB_ADMIN_PASSWORD et ADSB_INTERNAL_TOKEN.
 
 # Construire et démarrer les deux conteneurs
 docker compose up -d --build
@@ -98,11 +115,20 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Ouvrir :
+Ouvrir le radar :
 
 ```text
 http://localhost:8000
 ```
+
+Ouvrir l'administration :
+
+```text
+http://localhost:8082
+```
+
+Identifiant et mot de passe : valeurs `ADSB_ADMIN_USER` et
+`ADSB_ADMIN_PASSWORD` du fichier `.env`.
 
 Vérifier le flux :
 
@@ -166,6 +192,10 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_PRIMARY_COOLDOWN` | `600` | Pause après un 403 primaire (s) |
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
+| `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
+| `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
+| `ADSB_ADMIN_PASSWORD` | — | Mot de passe admin, obligatoire |
+| `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
 
 Appliquer une modification :
 
@@ -259,6 +289,47 @@ rafraîchissement et sources.
 État du cache sans appel upstream. Utilisé aussi par le healthcheck Docker du
 backend.
 
+### `POST /internal/reload`
+
+Endpoint interne non exposé par Nginx. Il recharge le fichier
+`/data/runtime.json` dans le backend. Il exige l'en-tête `X-Internal-Token`
+correspondant à `ADSB_INTERNAL_TOKEN`. Le service d'administration l'appelle
+après chaque modification.
+
+## Administration
+
+Le service `admin` est séparé du backend radar :
+
+- interface web sombre et responsive sur `http://<hôte>:8082` ;
+- HTTP Basic Auth ;
+- état du radar : source, cache, nombre de cibles, configuration active ;
+- modification à chaud de la position, des portées, du cache, de la cadence et
+  des sources ADS-B ;
+- persistance dans le volume Docker `radardesk_admin_data` ;
+- bouton **Recharger** et **Réinitialiser** vers les variables d'environnement.
+
+Les modifications sont appliquées sans redémarrage du backend. En cas de
+redémarrage du backend, la configuration runtime est relue depuis le volume.
+
+> Le service admin utilise HTTP Basic sur le réseau local. Ne pas l'exposer sur
+> Internet sans reverse proxy HTTPS et sans renforcer l'authentification.
+
+Les secrets sont dans `.env`. Pour les régénérer :
+
+```bash
+python3 - <<'PY'
+import secrets
+print("ADSB_ADMIN_PASSWORD=" + secrets.token_urlsafe(24))
+print("ADSB_INTERNAL_TOKEN=" + secrets.token_urlsafe(32))
+PY
+```
+
+Puis :
+
+```bash
+docker compose up -d --force-recreate backend admin
+```
+
 ## Chargement dans Morph Browser
 
 1. Relever l'adresse IP LAN de la machine Docker :
@@ -322,11 +393,12 @@ statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
 - **Le conteneur backend ne démarre pas** : `docker compose logs backend`.
 - **Écran noir, page chargée** : vérifier `/static/radar.js` et la console du
   navigateur.
-- **Changement de coordonnées non pris en compte** : recréer le backend :
-
-  ```bash
-  docker compose up -d --force-recreate backend
-  ```
+- **Changement de coordonnées non pris en compte** : appliquer la configuration
+  depuis `/admin` puis cliquer sur **Recharger**, ou recréer le backend.
+- **Administration en 401** : vérifier `ADSB_ADMIN_USER` /
+  `ADSB_ADMIN_PASSWORD` dans `.env`, puis recréer le service `admin`.
+- **Port 8082 occupé** : modifier `ADSB_ADMIN_PORT` dans `.env`, puis
+  `docker compose up -d --force-recreate admin`.
 
 ## Notes de performance
 

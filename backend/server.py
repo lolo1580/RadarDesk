@@ -16,10 +16,12 @@ Toutes les valeurs peuvent être surchargées par variables d'environnement.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
 import re
+import secrets
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -75,6 +77,10 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = Path(os.getenv("ADSB_STATIC_DIR", str(BASE_DIR / "static")))
 ASSETS_DIR = STATIC_DIR / "static" if (STATIC_DIR / "static").is_dir() else STATIC_DIR
 INDEX_FILE = STATIC_DIR / "index.html"
+
+# Surcharge de configuration gérée par le service d'administration.
+RUNTIME_CONFIG_FILE = Path(os.getenv("ADSB_RUNTIME_CONFIG_FILE", "/data/runtime.json"))
+INTERNAL_TOKEN = os.getenv("ADSB_INTERNAL_TOKEN", "").strip()
 
 # ============================================================================
 # FOURNISSEURS
@@ -137,6 +143,19 @@ if not 500 <= REFRESH_MS <= 60_000:
 if CACHE_TTL_S < 0 or STALE_TTL_S < CACHE_TTL_S:
     raise RuntimeError("Vérifier ADSB_CACHE_TTL et ADSB_STALE_TTL.")
 
+BASELINE_CONFIG: dict[str, Any] = {
+    "lat": LAT,
+    "lon": LON,
+    "dist_nm": DIST_NM,
+    "max_radius_nm": MAX_RADIUS_NM,
+    "refresh_ms": REFRESH_MS,
+    "cache_ttl_s": CACHE_TTL_S,
+    "stale_ttl_s": STALE_TTL_S,
+    "primary_provider": PRIMARY.key,
+    "fallback_provider": FALLBACK.key if FALLBACK else "none",
+    "primary_cooldown_s": PRIMARY_COOLDOWN_S,
+}
+
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
 if not CORS_ORIGINS:
     CORS_ORIGINS = ["*"]
@@ -191,6 +210,156 @@ _cache: CacheEntry | None = None
 _cache_lock = asyncio.Lock()
 _primary_blocked_until = 0.0
 _last_upstream_error: str | None = None
+_runtime_config_active = False
+
+# ============================================================================
+# CONFIGURATION RUNTIME (ADMINISTRATION)
+# ============================================================================
+
+
+def validate_runtime_config(payload: Any) -> dict[str, Any]:
+    """Valide une surcharge de configuration et complète les champs absents."""
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise TypeError("La configuration doit être un objet JSON.")
+
+    values: dict[str, Any] = dict(BASELINE_CONFIG)
+
+    def number(name: str) -> float:
+        raw = payload.get(name, values[name])
+        if isinstance(raw, bool):
+            raise TypeError(f"{name} doit être un nombre.")
+        try:
+            result = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} doit être un nombre.") from exc
+        if not math.isfinite(result):
+            raise ValueError(f"{name} doit être un nombre fini.")
+        return result
+
+    values["lat"] = number("lat")
+    values["lon"] = number("lon")
+    values["dist_nm"] = round(number("dist_nm"))
+    values["max_radius_nm"] = round(number("max_radius_nm"))
+    values["refresh_ms"] = round(number("refresh_ms"))
+    values["cache_ttl_s"] = round(number("cache_ttl_s"), 2)
+    values["stale_ttl_s"] = round(number("stale_ttl_s"), 2)
+    values["primary_cooldown_s"] = round(number("primary_cooldown_s"), 1)
+
+    primary = (
+        str(payload.get("primary_provider", values["primary_provider"])).strip().lower()
+    )
+    fallback = (
+        str(payload.get("fallback_provider", values["fallback_provider"]))
+        .strip()
+        .lower()
+    )
+    if primary not in PROVIDERS:
+        raise ValueError(f"Source primaire inconnue: {primary!r}.")
+    if fallback != "none" and fallback not in PROVIDERS:
+        raise ValueError(f"Source de secours inconnue: {fallback!r}.")
+    if fallback != "none" and fallback == primary:
+        raise ValueError(
+            "La source de secours doit être différente de la source primaire."
+        )
+
+    if not -90.0 <= values["lat"] <= 90.0:
+        raise ValueError("La latitude doit être comprise entre -90 et 90.")
+    if not -180.0 <= values["lon"] <= 180.0:
+        raise ValueError("La longitude doit être comprise entre -180 et 180.")
+    if not 1 <= values["dist_nm"] <= 250:
+        raise ValueError("Le rayon par défaut doit être compris entre 1 et 250 NM.")
+    if not values["dist_nm"] <= values["max_radius_nm"] <= 250:
+        raise ValueError(
+            "La portée maximale doit être comprise entre le rayon par défaut et 250 NM."
+        )
+    if not 500 <= values["refresh_ms"] <= 60_000:
+        raise ValueError("Le rafraîchissement doit être compris entre 500 et 60000 ms.")
+    if not 0 <= values["cache_ttl_s"] <= 60:
+        raise ValueError("Le cache TTL doit être compris entre 0 et 60 s.")
+    if not values["cache_ttl_s"] <= values["stale_ttl_s"] <= 3600:
+        raise ValueError(
+            "Le cache périmé doit être compris entre le cache TTL et 3600 s."
+        )
+    if not 0 <= values["primary_cooldown_s"] <= 86_400:
+        raise ValueError("Le cooldown doit être compris entre 0 et 86400 s.")
+
+    values["primary_provider"] = primary
+    values["fallback_provider"] = fallback
+    return values
+
+
+def read_runtime_config() -> dict[str, Any] | None:
+    """Lit le fichier de surcharge, ou None s'il n'existe pas encore."""
+    if not RUNTIME_CONFIG_FILE.is_file():
+        return None
+    try:
+        raw = json.loads(RUNTIME_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Fichier de configuration illisible: {exc}") from exc
+    return validate_runtime_config(raw)
+
+
+def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
+    global LAT, LON, DIST_NM, MAX_RADIUS_NM
+    global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
+    global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
+    global _cache, _primary_blocked_until, _last_upstream_error, _runtime_config_active
+
+    LAT = float(values["lat"])
+    LON = float(values["lon"])
+    DIST_NM = int(values["dist_nm"])
+    MAX_RADIUS_NM = int(values["max_radius_nm"])
+    REFRESH_MS = int(values["refresh_ms"])
+    CACHE_TTL_S = float(values["cache_ttl_s"])
+    STALE_TTL_S = float(values["stale_ttl_s"])
+    PRIMARY_COOLDOWN_S = float(values["primary_cooldown_s"])
+    PRIMARY_PROVIDER = str(values["primary_provider"])
+    FALLBACK_PROVIDER = str(values["fallback_provider"])
+    PRIMARY = PROVIDERS[PRIMARY_PROVIDER]
+    FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
+    _cache = None
+    _primary_blocked_until = 0.0
+    _last_upstream_error = None
+    _runtime_config_active = active
+
+
+def apply_runtime_config_from_file() -> bool:
+    """Applique la surcharge si elle existe, sinon les valeurs d'environnement."""
+    values = read_runtime_config()
+    _apply_runtime_config(values or BASELINE_CONFIG, active=values is not None)
+    return values is not None
+
+
+def config_payload() -> dict[str, Any]:
+    """Configuration publique, utilisée par le frontend et l'administration."""
+    return {
+        "lat": LAT,
+        "lon": LON,
+        "dist_nm": DIST_NM,
+        "max_radius_nm": MAX_RADIUS_NM,
+        "refresh_ms": REFRESH_MS,
+        "cache_ttl_s": CACHE_TTL_S,
+        "stale_ttl_s": STALE_TTL_S,
+        "timeout_s": UPSTREAM_TIMEOUT_S,
+        "primary_provider": PRIMARY.label,
+        "fallback_provider": FALLBACK.label if FALLBACK else None,
+        "primary_provider_key": PRIMARY.key,
+        "fallback_provider_key": FALLBACK.key if FALLBACK else "none",
+        "primary_cooldown_s": PRIMARY_COOLDOWN_S,
+        "config_source": "runtime" if _runtime_config_active else "environment",
+    }
+
+
+try:
+    apply_runtime_config_from_file()
+except (TypeError, ValueError) as exc:  # pragma: no cover - dépend du volume
+    logger.error(
+        "Configuration runtime invalide (%s), utilisation des variables d'environnement.",
+        exc,
+    )
+    _apply_runtime_config(BASELINE_CONFIG, active=False)
 
 # ============================================================================
 # UTILITAIRES
@@ -587,17 +756,7 @@ else:
 @app.get("/api/config", tags=["radar"])
 async def api_config() -> dict[str, Any]:
     """Configuration publique consommée par le frontend."""
-    return {
-        "lat": LAT,
-        "lon": LON,
-        "dist_nm": DIST_NM,
-        "max_radius_nm": MAX_RADIUS_NM,
-        "refresh_ms": REFRESH_MS,
-        "cache_ttl_s": CACHE_TTL_S,
-        "stale_ttl_s": STALE_TTL_S,
-        "primary_provider": PRIMARY.label,
-        "fallback_provider": FALLBACK.label if FALLBACK else None,
-    }
+    return config_payload()
 
 
 @app.get(
@@ -612,7 +771,7 @@ async def api_aircraft(
     radius_nm: int | None = Query(
         default=None,
         ge=1,
-        le=MAX_RADIUS_NM,
+        le=250,
         description="Distance d'affichage demandée, en milles nautiques.",
     ),
 ) -> list[AircraftTarget]:
@@ -670,6 +829,7 @@ async def api_health() -> dict[str, Any]:
             "cache_age_s": None,
             "last_success": None,
             "last_error": _last_upstream_error,
+            "config_source": "runtime" if _runtime_config_active else "environment",
         }
 
     age = time.monotonic() - snapshot.fetched_monotonic
@@ -681,7 +841,39 @@ async def api_health() -> dict[str, Any]:
         "aircraft_count": len(snapshot.aircraft),
         "last_success": iso_utc(snapshot.fetched_at),
         "last_error": _last_upstream_error,
+        "config_source": "runtime" if _runtime_config_active else "environment",
+        "max_radius_nm": MAX_RADIUS_NM,
     }
+
+
+@app.post("/internal/reload", include_in_schema=False)
+async def internal_reload(request: Request) -> dict[str, Any]:
+    """Recharge la configuration runtime depuis le volume partagé.
+
+    Cet endpoint n'est accessible que depuis le réseau Docker et exige le
+    jeton interne partagé avec le service d'administration.
+    """
+    if not INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="ADSB_INTERNAL_TOKEN n'est pas configuré.",
+        )
+
+    provided = request.headers.get("X-Internal-Token", "")
+    if not secrets.compare_digest(provided, INTERNAL_TOKEN):
+        raise HTTPException(status_code=401, detail="Jeton interne invalide.")
+
+    try:
+        active = apply_runtime_config_from_file()
+    except (TypeError, ValueError) as exc:
+        logger.error("Rechargement de configuration refusé: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    logger.info(
+        "Configuration runtime rechargée (%s).",
+        "fichier runtime" if active else "valeurs d'environnement",
+    )
+    return {"status": "reloaded", "config": config_payload()}
 
 
 # Les fichiers statiques sont montés après les routes API, uniquement si un

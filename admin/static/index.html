@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#050807">
+  <meta name="color-scheme" content="dark">
+  <title>RadarDesk // Admin</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="admin-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">RADARDESK / CONTROL PLANE</p>
+          <h1>ADMIN <span>CONSOLE</span></h1>
+        </div>
+      </div>
+      <a class="button button--ghost" id="radarLink" href="#" target="_blank" rel="noopener">
+        OUVRIR LE RADAR ↗
+      </a>
+    </header>
+
+    <section class="status-grid" aria-label="État du radar">
+      <article class="stat">
+        <span class="stat__label">LIAISON</span>
+        <strong class="stat__value" id="linkState">—</strong>
+        <small class="stat__detail" id="linkDetail">Connexion…</small>
+      </article>
+      <article class="stat">
+        <span class="stat__label">SOURCE</span>
+        <strong class="stat__value" id="sourceState">—</strong>
+        <small class="stat__detail" id="sourceDetail">—</small>
+      </article>
+      <article class="stat">
+        <span class="stat__label">CACHE</span>
+        <strong class="stat__value" id="cacheState">—</strong>
+        <small class="stat__detail">âge des données</small>
+      </article>
+      <article class="stat">
+        <span class="stat__label">CIBLES</span>
+        <strong class="stat__value" id="targetState">—</strong>
+        <small class="stat__detail">dans la portée max</small>
+      </article>
+      <article class="stat">
+        <span class="stat__label">CONFIG</span>
+        <strong class="stat__value" id="configState">—</strong>
+        <small class="stat__detail" id="configDetail">—</small>
+      </article>
+    </section>
+
+    <main class="panel">
+      <div class="panel__head">
+        <div>
+          <p class="eyebrow">RUNTIME OVERRIDE</p>
+          <h2>CONFIGURATION DU RADAR</h2>
+        </div>
+        <span class="pill" id="configSource">—</span>
+      </div>
+
+      <form id="configForm" novalidate>
+        <fieldset>
+          <legend>GÉOLOCALISATION</legend>
+          <label>
+            <span>Latitude</span>
+            <input id="lat" name="lat" type="number" step="0.0001" min="-90" max="90" required>
+          </label>
+          <label>
+            <span>Longitude</span>
+            <input id="lon" name="lon" type="number" step="0.0001" min="-180" max="180" required>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>PORTÉES &amp; CADENCE</legend>
+          <label>
+            <span>Rayon par défaut (NM)</span>
+            <input id="dist_nm" name="dist_nm" type="number" step="1" min="1" max="250" required>
+          </label>
+          <label>
+            <span>Portée maximale (NM)</span>
+            <input id="max_radius_nm" name="max_radius_nm" type="number" step="1" min="1" max="250" required>
+          </label>
+          <label>
+            <span>Rafraîchissement (ms)</span>
+            <input id="refresh_ms" name="refresh_ms" type="number" step="100" min="500" max="60000" required>
+          </label>
+          <label>
+            <span>Cache TTL (s)</span>
+            <input id="cache_ttl_s" name="cache_ttl_s" type="number" step="0.1" min="0" max="60" required>
+          </label>
+          <label>
+            <span>Cache périmé max (s)</span>
+            <input id="stale_ttl_s" name="stale_ttl_s" type="number" step="1" min="0" max="3600" required>
+          </label>
+          <label>
+            <span>Cooldown source (s)</span>
+            <input id="primary_cooldown_s" name="primary_cooldown_s" type="number" step="1" min="0" max="86400" required>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>SOURCES ADS-B</legend>
+          <label>
+            <span>Source primaire</span>
+            <select id="primary_provider" name="primary_provider" required>
+              <option value="airplanes_live">Airplanes.live</option>
+              <option value="adsb_lol">adsb.lol</option>
+            </select>
+          </label>
+          <label>
+            <span>Source de secours</span>
+            <select id="fallback_provider" name="fallback_provider" required>
+              <option value="adsb_lol">adsb.lol</option>
+              <option value="airplanes_live">Airplanes.live</option>
+              <option value="none">Aucune</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <p class="hint">
+          Les modifications sont validées puis appliquées à chaud au backend radar.
+          Elles restent persistées dans le volume Docker après redémarrage.
+        </p>
+
+        <div class="actions">
+          <button class="button button--primary" id="saveBtn" type="submit">APPLIQUER</button>
+          <button class="button" id="reloadBtn" type="button">RECHARGER</button>
+          <button class="button button--danger" id="resetBtn" type="button">RÉINITIALISER</button>
+        </div>
+
+        <p class="message" id="message" role="status"></p>
+      </form>
+    </main>
+
+    <footer class="footer">
+      <span>API ADMIN · BASIC AUTH</span>
+      <span id="lastRefresh">—</span>
+    </footer>
+  </div>
+
+  <script src="/static/admin.js" defer></script>
+</body>
+</html>
