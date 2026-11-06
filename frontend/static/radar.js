@@ -195,7 +195,7 @@
     const suffix = value >= 0 ? positive : negative;
     const absolute = Math.abs(value);
     const integer = String(Math.floor(absolute)).padStart(integerWidth, "0");
-    const decimals = absolute.toFixed(4).split(".")[1];
+    const decimals = absolute.toFixed(5).split(".")[1];
     return `${integer}.${decimals}${suffix}`;
   }
 
