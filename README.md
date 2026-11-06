@@ -205,6 +205,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather` ou `metar_taf` |
 | `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
+| `CHECKWX_API_KEY` | — | Clé API CheckWX |
 | `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
 
 Appliquer une modification :
@@ -442,7 +443,9 @@ Deux couches météo sont disponibles :
   - [Aviation Weather Center / NOAA](https://aviationweather.gov/data/api/) par défaut,
     sans clé API ;
   - [metar-taf.com](https://metar-taf.com/docs/) via `METAR_TAF_API_KEY`
-    (un crédit API par station interrogée).
+    (un crédit API par station interrogée) ;
+  - [CheckWX](https://www.checkwxapi.com/) via `CHECKWX_API_KEY`, avec requêtes
+    groupées par 25 stations.
   Catégorie de vol VFR/MVFR/IFR/LIFR, vent, visibilité, plafond, température,
   QNH et message brut. Cliquer sur un aéroport ouvre la fiche météo.
 - **Précipitations animées** via
@@ -453,11 +456,11 @@ Deux couches météo sont disponibles :
 Le backend met en cache les METAR 10 minutes et les métadonnées RainViewer
 2 minutes. Les tuiles radar sont chargées directement par le navigateur.
 
-Pour activer metar-taf.com :
+Pour activer metar-taf.com ou CheckWX, ajouter la clé correspondante :
 
 ```dotenv
-ADSB_METAR_PROVIDER=metar_taf
-METAR_TAF_API_KEY=votre_cle_api
+METAR_TAF_API_KEY=votre_cle_metar_taf
+CHECKWX_API_KEY=votre_cle_checkwx
 ```
 
 Puis :
@@ -466,7 +469,9 @@ Puis :
 docker compose up -d --force-recreate backend
 ```
 
-Le sélecteur de source METAR est ensuite disponible dans l'administration.
+Les fournisseurs disposant d'une clé deviennent sélectionnables dans
+**SOURCE MÉTÉO** de l'administration. NOAA reste le fournisseur par défaut sans
+clé.
 
 ## Notes de performance
 

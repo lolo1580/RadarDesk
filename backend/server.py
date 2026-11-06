@@ -65,11 +65,16 @@ WEATHER_RADAR_CACHE_TTL_S = float(os.getenv("ADSB_WEATHER_RADAR_CACHE_TTL", "120
 WEATHER_MAX_STATIONS = 120
 METAR_PROVIDER = os.getenv("ADSB_METAR_PROVIDER", "aviationweather").strip().lower()
 METAR_TAF_API_KEY = os.getenv("METAR_TAF_API_KEY", "").strip()
-METAR_PROVIDERS = {"aviationweather", "metar_taf"}
+CHECKWX_API_KEY = os.getenv("CHECKWX_API_KEY", "").strip()
+METAR_PROVIDERS = {"aviationweather", "metar_taf", "checkwx"}
 if METAR_PROVIDER not in METAR_PROVIDERS:
-    raise RuntimeError("ADSB_METAR_PROVIDER doit être aviationweather ou metar_taf.")
+    raise RuntimeError(
+        "ADSB_METAR_PROVIDER doit être aviationweather, metar_taf ou checkwx."
+    )
 if METAR_PROVIDER == "metar_taf" and not METAR_TAF_API_KEY:
     raise RuntimeError("METAR_TAF_API_KEY est requis pour la source metar-taf.com.")
+if METAR_PROVIDER == "checkwx" and not CHECKWX_API_KEY:
+    raise RuntimeError("CHECKWX_API_KEY est requis pour la source CheckWX.")
 
 # Timeout d'un appel upstream (secondes).
 UPSTREAM_TIMEOUT_S = float(os.getenv("ADSB_TIMEOUT", "4.0"))
@@ -290,6 +295,8 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         raise ValueError(f"Source METAR inconnue: {weather_metar!r}.")
     if weather_metar == "metar_taf" and not METAR_TAF_API_KEY:
         raise ValueError("METAR_TAF_API_KEY est requis pour metar-taf.com.")
+    if weather_metar == "checkwx" and not CHECKWX_API_KEY:
+        raise ValueError("CHECKWX_API_KEY est requis pour CheckWX.")
 
     if not -90.0 <= values["lat"] <= 90.0:
         raise ValueError("La latitude doit être comprise entre -90 et 90.")
@@ -382,6 +389,7 @@ def config_payload() -> dict[str, Any]:
         "primary_cooldown_s": PRIMARY_COOLDOWN_S,
         "weather_metar_provider": METAR_PROVIDER,
         "metar_taf_configured": bool(METAR_TAF_API_KEY),
+        "checkwx_configured": bool(CHECKWX_API_KEY),
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
 
@@ -982,6 +990,61 @@ def clean_metar_taf(payload: dict[str, Any], fallback_station: str) -> dict[str,
     }
 
 
+def clean_checkwx(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalise une réponse METAR décodée CheckWX."""
+    clouds = []
+    for cloud in raw.get("clouds") or []:
+        if not isinstance(cloud, dict):
+            continue
+        clouds.append(
+            {
+                "cover": cloud.get("code"),
+                "base_ft": cloud.get("feet"),
+            }
+        )
+
+    wind = raw.get("wind") if isinstance(raw.get("wind"), dict) else {}
+    speed = wind.get("speed") if isinstance(wind.get("speed"), dict) else {}
+    gust = wind.get("gust") if isinstance(wind.get("gust"), dict) else {}
+    direction = wind.get("degrees")
+    if direction is None and str(wind.get("direction") or "").upper() == "VRB":
+        direction = "VRB"
+
+    conditions = []
+    for condition in raw.get("conditions") or []:
+        if isinstance(condition, dict) and condition.get("text"):
+            conditions.append(condition["text"])
+        elif isinstance(condition, str):
+            conditions.append(condition)
+
+    station = raw.get("station") if isinstance(raw.get("station"), dict) else {}
+    pressure = raw.get("pressure") if isinstance(raw.get("pressure"), dict) else {}
+    visibility = (
+        raw.get("visibility") if isinstance(raw.get("visibility"), dict) else {}
+    )
+    temperature = (
+        raw.get("temperature") if isinstance(raw.get("temperature"), dict) else {}
+    )
+    dewpoint = raw.get("dewpoint") if isinstance(raw.get("dewpoint"), dict) else {}
+
+    return {
+        "icao": str(raw.get("icao") or "").upper(),
+        "name": station.get("name"),
+        "observed": raw.get("observed"),
+        "flight_category": (raw.get("flight_category") or "UNKNOWN").upper(),
+        "wind_direction": direction,
+        "wind_speed_kt": speed.get("kts"),
+        "wind_gust_kt": gust.get("kts"),
+        "visibility_sm": visibility.get("miles"),
+        "temperature_c": temperature.get("celsius"),
+        "dewpoint_c": dewpoint.get("celsius"),
+        "altimeter_hpa": pressure.get("mb"),
+        "weather": ", ".join(conditions),
+        "clouds": clouds,
+        "raw": raw.get("raw_text") or "",
+    }
+
+
 async def fetch_metar_taf_station(
     client: httpx.AsyncClient,
     station: str,
@@ -1056,6 +1119,43 @@ async def api_weather_metar(
                     continue
                 _metar_cache[station] = (fetched_at, result)
                 stations[station] = result
+        elif missing and METAR_PROVIDER == "checkwx":
+            if not CHECKWX_API_KEY:
+                raise HTTPException(
+                    status_code=503,
+                    detail="CHECKWX_API_KEY n'est pas configuré.",
+                )
+            fetched_at = time.monotonic()
+            for start in range(0, len(missing), 25):
+                chunk = missing[start : start + 25]
+                try:
+                    response = await request.app.state.http.get(
+                        f"https://api.checkwx.com/v2/metar/{','.join(chunk)}/decoded",
+                        headers={
+                            "X-API-Key": CHECKWX_API_KEY,
+                            "User-Agent": "radardesk/1.0 (local monitoring)",
+                        },
+                    )
+                    if response.status_code != 200:
+                        stale = True
+                        continue
+                    payload = response.json()
+                    items = payload.get("data") if isinstance(payload, dict) else None
+                    if not isinstance(items, list):
+                        stale = True
+                        continue
+                    for raw in items:
+                        if not isinstance(raw, dict):
+                            continue
+                        cleaned = clean_checkwx(raw)
+                        icao = cleaned["icao"]
+                        if not icao:
+                            continue
+                        _metar_cache[icao] = (fetched_at, cleaned)
+                        if icao in requested:
+                            stations[icao] = cleaned
+                except (httpx.HTTPError, ValueError):
+                    stale = True
         elif missing:
             try:
                 response = await request.app.state.http.get(
@@ -1097,9 +1197,10 @@ async def api_weather_metar(
     return {
         "stations": stations,
         "stale": stale,
-        "source": "metar-taf.com"
-        if METAR_PROVIDER == "metar_taf"
-        else "aviationweather.gov",
+        "source": {
+            "metar_taf": "metar-taf.com",
+            "checkwx": "checkwx.com",
+        }.get(METAR_PROVIDER, "aviationweather.gov"),
     }
 
 

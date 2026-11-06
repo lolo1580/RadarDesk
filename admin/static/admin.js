@@ -103,7 +103,9 @@
     const fallback = dom.form.elements.namedItem("fallback_provider");
     const weatherMetar = dom.form.elements.namedItem("weather_metar_provider");
     const metarOption = weatherMetar?.querySelector('option[value="metar_taf"]');
+    const checkwxOption = weatherMetar?.querySelector('option[value="checkwx"]');
     const metarConfigured = Boolean(config.metar_taf_configured);
+    const checkwxConfigured = Boolean(config.checkwx_configured);
     if (primary) {
       primary.value = config.primary_provider_key || config.primary_provider;
     }
@@ -114,17 +116,25 @@
       if (metarOption) {
         metarOption.disabled = !metarConfigured;
       }
+      if (checkwxOption) {
+        checkwxOption.disabled = !checkwxConfigured;
+      }
+      const selected = config.weather_metar_provider || "aviationweather";
       weatherMetar.value =
-        config.weather_metar_provider === "metar_taf" && !metarConfigured
+        (selected === "metar_taf" && !metarConfigured) ||
+        (selected === "checkwx" && !checkwxConfigured)
           ? "aviationweather"
-          : config.weather_metar_provider || "aviationweather";
+          : selected;
     }
     const metarHint = document.getElementById("metarProviderHint");
     if (metarHint) {
-      metarHint.classList.toggle("is-off", !metarConfigured);
-      metarHint.textContent = metarConfigured
-        ? "metar-taf.com est disponible : clé API configurée (1 crédit par station)."
-        : "metar-taf.com indisponible : renseigner METAR_TAF_API_KEY dans .env puis recréer le backend.";
+      const configured = [];
+      if (metarConfigured) configured.push("metar-taf.com");
+      if (checkwxConfigured) configured.push("CheckWX");
+      metarHint.classList.toggle("is-off", configured.length === 0);
+      metarHint.textContent = configured.length
+        ? `Fournisseurs avec clé configurée : ${configured.join(", ")}.`
+        : "metar-taf.com et CheckWX indisponibles : renseigner METAR_TAF_API_KEY ou CHECKWX_API_KEY dans .env puis recréer le backend.";
     }
 
     const isRuntime = config.config_source === "runtime";

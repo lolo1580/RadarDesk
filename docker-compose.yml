@@ -24,6 +24,7 @@ services:
       ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-*}"
       ADSB_METAR_PROVIDER: "${ADSB_METAR_PROVIDER:-aviationweather}"
       METAR_TAF_API_KEY: "${METAR_TAF_API_KEY:-}"
+      CHECKWX_API_KEY: "${CHECKWX_API_KEY:-}"
       ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
       ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
     expose:

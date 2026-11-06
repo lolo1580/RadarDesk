@@ -132,10 +132,11 @@
             <select id="weather_metar_provider" name="weather_metar_provider" required>
               <option value="aviationweather">Aviation Weather Center / NOAA</option>
               <option value="metar_taf">metar-taf.com (clé API requise)</option>
+              <option value="checkwx">CheckWX (clé API requise)</option>
             </select>
           </label>
           <p class="field-note" id="metarProviderHint">
-            Pour metar-taf.com, renseigner METAR_TAF_API_KEY dans .env.
+            Pour metar-taf.com ou CheckWX, renseigner la clé correspondante dans .env.
           </p>
         </fieldset>
 

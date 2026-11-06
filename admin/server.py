@@ -79,7 +79,7 @@ class RuntimeConfigPayload(BaseModel):
     primary_provider: Literal["airplanes_live", "adsb_lol"]
     fallback_provider: Literal["airplanes_live", "adsb_lol", "none"]
     primary_cooldown_s: float = Field(ge=0, le=86_400)
-    weather_metar_provider: Literal["aviationweather", "metar_taf"]
+    weather_metar_provider: Literal["aviationweather", "metar_taf", "checkwx"]
 
     @model_validator(mode="after")
     def validate_coherence(self) -> RuntimeConfigPayload:
