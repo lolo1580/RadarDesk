@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +46,10 @@ PORT = int(os.getenv("ADSB_PORT", "8000"))
 LAT = float(os.getenv("ADSB_LAT", "46.8687"))
 LON = float(os.getenv("ADSB_LON", "6.9416"))
 DIST_NM = int(os.getenv("ADSB_RADIUS_NM", "50"))
+# Portée maximale réellement récupérée en amont. Le frontend peut ensuite
+# réduire ou augmenter la distance d'affichage jusqu'à cette valeur sans
+# provoquer un nouvel appel API.
+MAX_RADIUS_NM = int(os.getenv("ADSB_MAX_RADIUS_NM", "150"))
 
 # Cache : le frontend interroge l'API toutes les 3 secondes.
 REFRESH_MS = int(os.getenv("ADSB_REFRESH_MS", "3000"))
@@ -124,6 +128,10 @@ if not -180.0 <= LON <= 180.0:
     raise RuntimeError("ADSB_LON doit être compris entre -180 et 180.")
 if not 1 <= DIST_NM <= 250:
     raise RuntimeError("ADSB_RADIUS_NM doit être compris entre 1 et 250.")
+if not DIST_NM <= MAX_RADIUS_NM <= 250:
+    raise RuntimeError(
+        "ADSB_MAX_RADIUS_NM doit être compris entre ADSB_RADIUS_NM et 250."
+    )
 if not 500 <= REFRESH_MS <= 60_000:
     raise RuntimeError("ADSB_REFRESH_MS doit être compris entre 500 et 60000.")
 if CACHE_TTL_S < 0 or STALE_TTL_S < CACHE_TTL_S:
@@ -268,7 +276,7 @@ def normalize_aircraft(raw_aircraft: list[dict[str, Any]]) -> list[AircraftTarge
             continue
 
         distance = haversine_nm(LAT, LON, lat, lon)
-        if distance > DIST_NM:
+        if distance > MAX_RADIUS_NM:
             continue
 
         alt_raw = raw.get("alt_baro")
@@ -322,7 +330,9 @@ async def fetch_provider(
     *,
     fallback_used: bool,
 ) -> CacheEntry:
-    url = provider.url_template.format(lat=f"{LAT:.5f}", lon=f"{LON:.5f}", dist=DIST_NM)
+    url = provider.url_template.format(
+        lat=f"{LAT:.5f}", lon=f"{LON:.5f}", dist=MAX_RADIUS_NM
+    )
     started = time.monotonic()
 
     try:
@@ -475,6 +485,7 @@ def apply_cache_headers(
     *,
     stale: bool,
     age_s: float,
+    range_nm: float,
 ) -> None:
     """Expose les métadonnées utiles au scope via des en-têtes HTTP."""
     response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -486,7 +497,9 @@ def apply_cache_headers(
     response.headers["X-Upstream-Latency-Ms"] = f"{entry.latency_ms:.0f}"
     response.headers["X-Last-Success"] = iso_utc(entry.fetched_at)
     response.headers["X-Refresh-Ms"] = str(REFRESH_MS)
-    response.headers["X-Range-NM"] = str(DIST_NM)
+    response.headers["X-Range-NM"] = f"{range_nm:g}"
+    response.headers["X-Max-Range-NM"] = str(MAX_RADIUS_NM)
+    response.headers["X-Default-Range-NM"] = str(DIST_NM)
     response.headers["X-Center-Lat"] = f"{LAT:.6f}"
     response.headers["X-Center-Lon"] = f"{LON:.6f}"
 
@@ -506,9 +519,10 @@ async def lifespan(app: FastAPI):
         follow_redirects=True,
     )
     logger.info(
-        "Scope ADS-B prêt — centre %.5f/%.5f, rayon %d NM, source %s%s",
+        "Scope ADS-B prêt — centre %.5f/%.5f, portée max %d NM (défaut %d NM), source %s%s",
         LAT,
         LON,
+        MAX_RADIUS_NM,
         DIST_NM,
         PRIMARY.label,
         f" (secours: {FALLBACK.label})" if FALLBACK else "",
@@ -544,6 +558,8 @@ app.add_middleware(
         "X-Last-Success",
         "X-Refresh-Ms",
         "X-Range-NM",
+        "X-Max-Range-NM",
+        "X-Default-Range-NM",
         "X-Center-Lat",
         "X-Center-Lon",
     ],
@@ -575,6 +591,7 @@ async def api_config() -> dict[str, Any]:
         "lat": LAT,
         "lon": LON,
         "dist_nm": DIST_NM,
+        "max_radius_nm": MAX_RADIUS_NM,
         "refresh_ms": REFRESH_MS,
         "cache_ttl_s": CACHE_TTL_S,
         "stale_ttl_s": STALE_TTL_S,
@@ -589,13 +606,27 @@ async def api_config() -> dict[str, Any]:
     tags=["radar"],
     summary="Cibles ADS-B normalisées dans la bulle",
 )
-async def api_aircraft(request: Request, response: Response) -> list[AircraftTarget]:
-    """Liste les aéronefs dans le rayon configuré.
+async def api_aircraft(
+    request: Request,
+    response: Response,
+    radius_nm: int | None = Query(
+        default=None,
+        ge=1,
+        le=MAX_RADIUS_NM,
+        description="Distance d'affichage demandée, en milles nautiques.",
+    ),
+) -> list[AircraftTarget]:
+    """Liste les aéronefs dans le rayon demandé.
 
-    En cas d'échec upstream, le dernier cache valide est renvoyé avec
+    La portée maximale est récupérée en amont une seule fois par cycle de
+    cache ; la distance d'affichage peut ensuite varier sans nouvel appel
+    upstream. En cas d'échec upstream, le dernier cache valide est renvoyé avec
     l'en-tête ``X-Data-Stale: 1``. Sans cache valide, une erreur 503 est
     retournée.
     """
+    requested_radius = float(radius_nm if radius_nm is not None else DIST_NM)
+    requested_radius = min(requested_radius, float(MAX_RADIUS_NM))
+
     try:
         snapshot, stale, age = await get_snapshot(request.app.state.http)
     except UpstreamError:
@@ -612,8 +643,20 @@ async def api_aircraft(request: Request, response: Response) -> list[AircraftTar
             },
         )
 
-    apply_cache_headers(response, snapshot, stale=stale, age_s=age)
-    return snapshot.aircraft
+    visible_aircraft = [
+        target
+        for target in snapshot.aircraft
+        if haversine_nm(LAT, LON, target.lat, target.lon) <= requested_radius
+    ]
+
+    apply_cache_headers(
+        response,
+        snapshot,
+        stale=stale,
+        age_s=age,
+        range_nm=requested_radius,
+    )
+    return visible_aircraft
 
 
 @app.get("/api/health", tags=["diagnostic"])

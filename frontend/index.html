@@ -25,7 +25,7 @@
         Votre navigateur ne prend pas en charge HTML5 Canvas.
       </canvas>
 
-      <div class="scope__hud" aria-hidden="true">
+      <div class="scope__hud">
         <div class="hud-block">
           <span class="hud-kicker">RADARDESK / 1090 MHZ</span>
           <span class="hud-value">ADS-B <span class="hud-dim">SURVEILLANCE</span></span>
@@ -36,8 +36,15 @@
           <span class="hud-value" id="hudCoords">46.8687N 006.9416E</span>
         </div>
 
+        <div class="range-control" role="group" aria-label="Distance d'affichage">
+          <button id="rangeDown" type="button" title="Diminuer la distance"
+                  aria-label="Diminuer la distance d'affichage">&minus;</button>
+          <span class="range-readout" aria-live="polite">RANGE <b id="hudRange">50</b> NM</span>
+          <button id="rangeUp" type="button" title="Augmenter la distance"
+                  aria-label="Augmenter la distance d'affichage">+</button>
+        </div>
+
         <div class="hud-foot">
-          <span>RANGE <b id="hudRange">50</b> NM</span>
           <span>SWEEP <b>4.0</b> S</span>
           <span>PPI <b>NORTH-UP</b></span>
         </div>

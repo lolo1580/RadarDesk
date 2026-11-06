@@ -10,12 +10,15 @@
   const SWEEP_PERIOD_MS = 4000;
   const FETCH_TIMEOUT_MS = 10000;
   const ECHO_HISTORY_LENGTH = 3;
+  const RANGE_STEPS = [10, 25, 50, 75, 100, 125, 150, 200, 250];
+  const RANGE_STORAGE_KEY = "radardesk.rangeNm";
   const FONT_STACK = '"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
   const DEFAULT_CONFIG = Object.freeze({
     lat: 46.8687,
     lon: 6.9416,
     distNm: 50,
+    maxDistNm: 150,
     refreshMs: 3000,
   });
 
@@ -65,6 +68,8 @@
     hudCoords: document.getElementById("hudCoords"),
     hudRange: document.getElementById("hudRange"),
     hudLink: document.getElementById("hudLink"),
+    rangeDown: document.getElementById("rangeDown"),
+    rangeUp: document.getElementById("rangeUp"),
   };
 
   const ctx = dom.canvas.getContext("2d", { alpha: false, desynchronized: true });
@@ -78,6 +83,7 @@
 
   const state = {
     config: { ...DEFAULT_CONFIG },
+    rawAircraft: [],
     targets: [],
     byHex: new Map(),
     focusedHex: null,
@@ -299,25 +305,36 @@
     };
   }
 
-  function applyAircraftList(list) {
+  function applyAircraftList(list, addHistory = true) {
+    if (addHistory) {
+      state.rawAircraft = Array.isArray(list) ? list : [];
+    }
+
+    const source = state.rawAircraft;
     const next = [];
     const previousByHex = state.byHex;
 
-    for (const raw of list) {
+    for (const raw of source) {
       const target = buildTarget(raw);
       if (!target) {
         continue;
       }
 
       // Conserve les échos des positions précédentes pour dessiner une
-      // traînée de rémanence réaliste derrière chaque piste.
+      // traînée de rémanence réaliste derrière chaque piste. Lors d'un simple
+      // changement de portée, on conserve l'historique sans ajouter une
+      // nouvelle position.
       const previous = previousByHex.get(target.hex);
-      target.echoes = previous
-        ? [
-            { distance: previous.distance, bearingRad: previous.bearingRad },
-            ...(previous.echoes || []),
-          ].slice(0, ECHO_HISTORY_LENGTH)
-        : [];
+      if (addHistory) {
+        target.echoes = previous
+          ? [
+              { distance: previous.distance, bearingRad: previous.bearingRad },
+              ...(previous.echoes || []),
+            ].slice(0, ECHO_HISTORY_LENGTH)
+          : [];
+      } else {
+        target.echoes = previous ? [...(previous.echoes || [])] : [];
+      }
 
       next.push(target);
     }
@@ -423,6 +440,9 @@
     for (const button of buttons) {
       button.setAttribute("aria-pressed", String(button.dataset.hex === state.focusedHex));
     }
+    if (view.ready) {
+      layoutTargets();
+    }
   }
 
   dom.contactList.addEventListener("click", (event) => {
@@ -481,8 +501,64 @@
     setText(dom.hudRange, String(Math.round(distNm)));
   }
 
+  function getRangeSteps() {
+    const max = Math.max(1, state.config.maxDistNm);
+    const steps = RANGE_STEPS.filter((value) => value <= max);
+    if (!steps.length || steps[steps.length - 1] !== max) {
+      steps.push(max);
+    }
+    return [...new Set(steps)].sort((a, b) => a - b);
+  }
+
+  function clampRange(value) {
+    return Math.max(1, Math.min(state.config.maxDistNm, Math.round(value)));
+  }
+
+  function updateRangeButtons() {
+    const steps = getRangeSteps();
+    const current = state.config.distNm;
+    dom.rangeDown.disabled = !steps.some((value) => value < current);
+    dom.rangeUp.disabled = !steps.some((value) => value > current);
+  }
+
+  function setRange(value) {
+    const next = clampRange(value);
+    if (next === state.config.distNm) {
+      updateRangeButtons();
+      return;
+    }
+
+    state.config.distNm = next;
+    try {
+      window.localStorage.setItem(RANGE_STORAGE_KEY, String(next));
+    } catch {
+      // Stockage local indisponible : la portée reste valable pour la session.
+    }
+
+    updateHud();
+    updateRangeButtons();
+    if (view.ready) {
+      rebuildBackground();
+    }
+    // Les données jusqu'à la portée maximale sont déjà dans state.rawAircraft.
+    applyAircraftList(null, false);
+  }
+
+  function shiftRange(direction) {
+    const steps = getRangeSteps();
+    const current = state.config.distNm;
+    const target =
+      direction > 0
+        ? steps.find((value) => value > current)
+        : [...steps].reverse().find((value) => value < current);
+    if (target !== undefined) {
+      setRange(target);
+    }
+  }
+
   function applyServerMeta(meta) {
     let changed = false;
+    let rangeConfigChanged = false;
 
     if (meta.lat !== null && meta.lat !== state.config.lat) {
       state.config.lat = meta.lat;
@@ -492,14 +568,25 @@
       state.config.lon = meta.lon;
       changed = true;
     }
-    if (meta.distNm !== null && meta.distNm >= 1 && meta.distNm !== state.config.distNm) {
-      state.config.distNm = meta.distNm;
-      changed = true;
+    if (
+      meta.maxDistNm !== null &&
+      meta.maxDistNm >= 1 &&
+      meta.maxDistNm !== state.config.maxDistNm
+    ) {
+      state.config.maxDistNm = meta.maxDistNm;
+      rangeConfigChanged = true;
+      if (state.config.distNm > state.config.maxDistNm) {
+        state.config.distNm = state.config.maxDistNm;
+        changed = true;
+      }
     }
     if (meta.refreshMs !== null && meta.refreshMs >= 500 && meta.refreshMs !== state.config.refreshMs) {
       state.config.refreshMs = meta.refreshMs;
     }
 
+    if (rangeConfigChanged) {
+      updateRangeButtons();
+    }
     if (changed) {
       updateHud();
       if (view.ready) {
@@ -813,6 +900,11 @@
     const ordered = state.targets
       .slice()
       .sort((a, b) => a.style.priority - b.style.priority || a.distance - b.distance);
+    const areaBudget = Math.max(
+      10,
+      Math.min(22, Math.floor((view.width * view.height) / 26000)),
+    );
+    const labelBudget = state.targets.length > 35 ? areaBudget : state.targets.length;
 
     for (const target of state.targets) {
       target.ratio = clamp(target.distance / Math.max(1, state.config.distNm), 0, 1);
@@ -830,7 +922,17 @@
       bottom: target._y + 7,
     }));
 
-    for (const target of ordered) {
+    for (let orderIndex = 0; orderIndex < ordered.length; orderIndex += 1) {
+      const target = ordered[orderIndex];
+      const showLabel =
+        orderIndex < labelBudget ||
+        target.style.priority < 2 ||
+        target.hex === state.focusedHex;
+      target._showLabel = showLabel;
+      if (!showLabel) {
+        continue;
+      }
+
       const x = target._x;
       const y = target._y;
       const callWidth = target.labelCallsign.length * view.labelFont * 0.66;
@@ -903,6 +1005,19 @@
             }
           }
         }
+      }
+
+      // Si aucune position sans chevauchement n'existe, on masque l'étiquette
+      // plutôt que de superposer du texte illisible. Les alertes et la cible
+      // sélectionnée restent toujours étiquetées.
+      if (
+        best &&
+        bestScore >= 100 &&
+        target.style.priority === 2 &&
+        target.hex !== state.focusedHex
+      ) {
+        target._showLabel = false;
+        continue;
       }
 
       if (best) {
@@ -1031,7 +1146,7 @@
     // Traits de rappel discrets pour les étiquettes déplacées.
     ctx.lineWidth = 0.7;
     for (const target of state.targets) {
-      if (!target._labelLeader) {
+      if (!target._showLabel || !target._labelLeader) {
         continue;
       }
       const edgeX =
@@ -1049,6 +1164,9 @@
     ctx.font = `700 ${view.labelFont}px ${FONT_STACK}`;
     ctx.textBaseline = "middle";
     for (const target of state.targets) {
+      if (!target._showLabel) {
+        continue;
+      }
       ctx.textAlign = target._labelAlign;
       ctx.globalAlpha = 0.52 + 0.48 * target._intensity;
       ctx.fillStyle = target.style.labelColor;
@@ -1059,6 +1177,9 @@
     ctx.font = `${view.detailFont}px ${FONT_STACK}`;
     ctx.textBaseline = "middle";
     for (const target of state.targets) {
+      if (!target._showLabel) {
+        continue;
+      }
       ctx.textAlign = target._labelAlign;
       ctx.globalAlpha = 0.42 + 0.42 * target._intensity;
       ctx.fillStyle = target.style.detailColor;
@@ -1301,7 +1422,7 @@
       cacheAge: numberOrNull(response.headers.get("X-Cache-Age")),
       lastSuccess: response.headers.get("X-Last-Success"),
       refreshMs: numberOrNull(response.headers.get("X-Refresh-Ms")),
-      distNm: numberOrNull(response.headers.get("X-Range-NM")),
+      maxDistNm: numberOrNull(response.headers.get("X-Max-Range-NM")),
       lat: numberOrNull(response.headers.get("X-Center-Lat")),
       lon: numberOrNull(response.headers.get("X-Center-Lon")),
     };
@@ -1317,7 +1438,8 @@
     const timeout = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const response = await fetch("/api/aircraft", {
+      const requestedRange = Math.round(state.config.maxDistNm);
+      const response = await fetch(`/api/aircraft?radius_nm=${requestedRange}`, {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: controller.signal,
@@ -1408,6 +1530,7 @@
       const lat = toFiniteNumber(config.lat);
       const lon = toFiniteNumber(config.lon);
       const distNm = toFiniteNumber(config.dist_nm);
+      const maxDistNm = toFiniteNumber(config.max_radius_nm);
       const refreshMs = toFiniteNumber(config.refresh_ms);
 
       if (lat !== null) {
@@ -1416,14 +1539,30 @@
       if (lon !== null) {
         state.config.lon = lon;
       }
+      if (maxDistNm !== null && maxDistNm >= 1) {
+        state.config.maxDistNm = Math.min(250, Math.round(maxDistNm));
+      }
       if (distNm !== null && distNm >= 1) {
         state.config.distNm = distNm;
       }
+
+      let storedRange = null;
+      try {
+        storedRange = toFiniteNumber(window.localStorage.getItem(RANGE_STORAGE_KEY));
+      } catch {
+        storedRange = null;
+      }
+      if (storedRange !== null) {
+        state.config.distNm = storedRange;
+      }
+      state.config.distNm = clampRange(state.config.distNm);
+
       if (refreshMs !== null && refreshMs >= 500) {
         state.config.refreshMs = refreshMs;
       }
 
       updateHud();
+      updateRangeButtons();
       if (view.ready) {
         rebuildBackground();
         layoutTargets();
@@ -1470,6 +1609,8 @@
   }
 
   dom.fullscreenBtn.addEventListener("click", toggleFullscreen);
+  dom.rangeDown.addEventListener("click", () => shiftRange(-1));
+  dom.rangeUp.addEventListener("click", () => shiftRange(1));
   document.addEventListener("fullscreenchange", () => {
     window.setTimeout(resizeCanvas, 80);
   });
@@ -1497,6 +1638,7 @@
   setupResizeHandling();
   resizeCanvas();
   updateHud();
+  updateRangeButtons();
   setStreamState("connecting", "ACQUISITION");
   startFrameLoop();
   loadConfig().finally(poll);

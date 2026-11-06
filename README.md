@@ -14,6 +14,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Grain phosphore, réflexion de verre et balayage CRT très lent.
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
+- Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
 - Modes paysage 18:9 et portrait compact, sans défilement.
@@ -153,7 +154,8 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_HTTP_PORT` | `8000` | Port hôte exposé par Nginx |
 | `ADSB_LAT` | `46.8687` | Latitude du centre du scope |
 | `ADSB_LON` | `6.9416` | Longitude du centre du scope |
-| `ADSB_RADIUS_NM` | `50` | Rayon de couverture en NM |
+| `ADSB_RADIUS_NM` | `50` | Rayon d'affichage par défaut en NM |
+| `ADSB_MAX_RADIUS_NM` | `150` | Portée maximale récupérée en amont |
 | `ADSB_REFRESH_MS` | `3000` | Intervalle de polling frontend |
 | `ADSB_CACHE_TTL` | `2.5` | Durée du cache serveur (s) |
 | `ADSB_STALE_TTL` | `120` | Durée maximale du cache de secours (s) |
@@ -201,7 +203,17 @@ docker compose up -d --force-recreate backend
 
 ### `GET /api/aircraft`
 
-Retourne un tableau JSON de cibles normalisées :
+Retourne un tableau JSON de cibles normalisées, filtré selon la distance
+d'affichage demandée :
+
+```text
+GET /api/aircraft?radius_nm=50
+```
+
+Sans paramètre, le rayon par défaut `ADSB_RADIUS_NM` est utilisé. La portée
+maximale est `ADSB_MAX_RADIUS_NM` (150 NM par défaut, 250 NM maximum). Le
+frontend récupère la portée maximale une seule fois par cycle de cache, puis
+filtre localement les boutons `−` / `+` pour un changement instantané.
 
 ```json
 [
@@ -228,6 +240,8 @@ Métadonnées dans les en-têtes de réponse :
 - `X-Cache-Age`
 - `X-Last-Success`
 - `X-Range-NM`
+- `X-Max-Range-NM`
+- `X-Default-Range-NM`
 - `X-Center-Lat`
 - `X-Center-Lon`
 
@@ -302,6 +316,8 @@ statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
 - **Le scope affiche `HORS LIGNE`** : les dernières cibles connues restent
   affichées ; le polling reprend automatiquement.
 - **Port 8000 déjà utilisé** : `ADSB_HTTP_PORT=8080 docker compose up -d`.
+- **Portée maximale trop faible** : augmenter `ADSB_MAX_RADIUS_NM` (max 250)
+  puis recréer le backend.
 - **Le conteneur backend ne démarre pas** : `docker compose logs backend`.
 - **Écran noir, page chargée** : vérifier `/static/radar.js` et la console du
   navigateur.
