@@ -1,0 +1,71 @@
+name: radardesk
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      ADSB_HOST: "0.0.0.0"
+      ADSB_PORT: "8000"
+      ADSB_LAT: "${ADSB_LAT:-46.8687}"
+      ADSB_LON: "${ADSB_LON:-6.9416}"
+      ADSB_RADIUS_NM: "${ADSB_RADIUS_NM:-50}"
+      ADSB_REFRESH_MS: "${ADSB_REFRESH_MS:-3000}"
+      ADSB_CACHE_TTL: "${ADSB_CACHE_TTL:-2.5}"
+      ADSB_STALE_TTL: "${ADSB_STALE_TTL:-120}"
+      ADSB_TIMEOUT: "${ADSB_TIMEOUT:-4.0}"
+      ADSB_PRIMARY_PROVIDER: "${ADSB_PRIMARY_PROVIDER:-airplanes_live}"
+      ADSB_FALLBACK_PROVIDER: "${ADSB_FALLBACK_PROVIDER:-adsb_lol}"
+      ADSB_PRIMARY_COOLDOWN: "${ADSB_PRIMARY_COOLDOWN:-600}"
+      ADSB_LOG_LEVEL: "${ADSB_LOG_LEVEL:-INFO}"
+      ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-*}"
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${ADSB_HTTP_PORT:-8000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
