@@ -35,7 +35,8 @@ HOST = os.getenv("ADMIN_HOST", "0.0.0.0")
 PORT = int(os.getenv("ADMIN_PORT", "8000"))
 
 ADMIN_USER = os.getenv("ADSB_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("ADSB_ADMIN_PASSWORD", "")
+ADMIN_PASSWORD = os.getenv("ADSB_ADMIN_PASSWORD", "admin") or "admin"
+DEFAULT_CREDENTIALS = ADMIN_USER == "admin" and ADMIN_PASSWORD == "admin"
 INTERNAL_TOKEN = os.getenv("ADSB_INTERNAL_TOKEN", "").strip()
 
 RADAR_BACKEND_URL = os.getenv("RADAR_BACKEND_URL", "http://backend:8000").rstrip("/")
@@ -48,10 +49,6 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
 
-if not ADMIN_PASSWORD:
-    raise RuntimeError("ADSB_ADMIN_PASSWORD doit être défini.")
-if len(ADMIN_PASSWORD) < 8:
-    raise RuntimeError("ADSB_ADMIN_PASSWORD doit contenir au moins 8 caractères.")
 if not INTERNAL_TOKEN:
     raise RuntimeError("ADSB_INTERNAL_TOKEN doit être défini.")
 
@@ -61,6 +58,10 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("radardesk-admin")
+if DEFAULT_CREDENTIALS:
+    logger.warning(
+        "Identifiants admin par défaut (admin/admin) : à changer hors usage local."
+    )
 
 # ============================================================================
 # MODÈLE DE CONFIGURATION RUNTIME
@@ -305,6 +306,7 @@ async def api_status(request: Request) -> JSONResponse:
             "config": radar_config,
             "runtime_file_exists": RUNTIME_CONFIG_FILE.is_file(),
             "radar_public_port": RADAR_PUBLIC_PORT,
+            "default_credentials": DEFAULT_CREDENTIALS,
         }
     )
 

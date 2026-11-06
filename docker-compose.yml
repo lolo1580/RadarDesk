@@ -84,7 +84,7 @@ services:
       ADMIN_HOST: "0.0.0.0"
       ADMIN_PORT: "8000"
       ADSB_ADMIN_USER: "${ADSB_ADMIN_USER:-admin}"
-      ADSB_ADMIN_PASSWORD: "${ADSB_ADMIN_PASSWORD:?Definir ADSB_ADMIN_PASSWORD dans .env}"
+      ADSB_ADMIN_PASSWORD: "${ADSB_ADMIN_PASSWORD:-admin}"
       ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
       ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
       RADAR_BACKEND_URL: http://backend:8000

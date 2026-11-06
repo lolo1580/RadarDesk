@@ -137,6 +137,21 @@ h2 {
   letter-spacing: 0.12em;
 }
 
+.warning-banner {
+  margin-top: 15px;
+  padding: 10px 12px;
+  color: var(--amber);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 194, 71, 0.42);
+  background: rgba(255, 194, 71, 0.055);
+}
+
+.warning-banner strong {
+  color: #ffe0a0;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -378,7 +393,22 @@ select {
     gap: 14px;
   }
 
-  .status-grid {
+  .warning-banner {
+  margin-top: 15px;
+  padding: 10px 12px;
+  color: var(--amber);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 194, 71, 0.42);
+  background: rgba(255, 194, 71, 0.055);
+}
+
+.warning-banner strong {
+  color: #ffe0a0;
+}
+
+.status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -397,7 +427,22 @@ select {
     padding: 12px;
   }
 
-  .status-grid {
+  .warning-banner {
+  margin-top: 15px;
+  padding: 10px 12px;
+  color: var(--amber);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 194, 71, 0.42);
+  background: rgba(255, 194, 71, 0.055);
+}
+
+.warning-banner strong {
+  color: #ffe0a0;
+}
+
+.status-grid {
     grid-template-columns: 1fr 1fr;
   }
 

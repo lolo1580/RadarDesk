@@ -13,6 +13,7 @@
     configState: document.getElementById("configState"),
     configDetail: document.getElementById("configDetail"),
     configSource: document.getElementById("configSource"),
+    securityWarning: document.getElementById("securityWarning"),
     message: document.getElementById("message"),
     lastRefresh: document.getElementById("lastRefresh"),
     saveBtn: document.getElementById("saveBtn"),
@@ -149,6 +150,8 @@
       dom.targetState,
       radar.aircraft_count !== undefined ? radar.aircraft_count : "—",
     );
+
+    dom.securityWarning.hidden = !status.default_credentials;
 
     const isRuntime = config.config_source === "runtime";
     setText(dom.configState, isRuntime ? "RUNTIME" : "ENV");

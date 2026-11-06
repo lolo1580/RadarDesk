@@ -104,9 +104,9 @@ Prérequis : Docker Engine et le plugin Docker Compose.
 git clone https://github.com/lolo1580/RadarDesk.git
 cd RadarDesk
 
-# Obligatoire pour l'administration : personnaliser les secrets
+# Administration : identifiants par défaut admin / admin.
 cp .env.example .env
-# Remplacer impérativement ADSB_ADMIN_PASSWORD et ADSB_INTERNAL_TOKEN.
+# Remplacer impérativement ADSB_ADMIN_PASSWORD avant exposition réseau.
 
 # Construire et démarrer les deux conteneurs
 docker compose up -d --build
@@ -127,7 +127,8 @@ Ouvrir l'administration :
 http://localhost:8082
 ```
 
-Identifiant et mot de passe : valeurs `ADSB_ADMIN_USER` et
+Identifiant et mot de passe par défaut : `admin` / `admin`.
+Les valeurs personnalisées se trouvent dans `ADSB_ADMIN_USER` et
 `ADSB_ADMIN_PASSWORD` du fichier `.env`.
 
 Vérifier le flux :
@@ -195,7 +196,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
-| `ADSB_ADMIN_PASSWORD` | — | Mot de passe admin, obligatoire |
+| `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
 
 Appliquer une modification :
@@ -302,7 +303,7 @@ après chaque modification.
 Le service `admin` est séparé du backend radar :
 
 - interface web sombre et responsive sur `http://<hôte>:8082` ;
-- HTTP Basic Auth ;
+- HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
 - état du radar : source, cache, nombre de cibles, configuration active ;
 - modification à chaud de la position, des portées, du cache, de la cadence et
   des sources ADS-B ;
@@ -312,10 +313,12 @@ Le service `admin` est séparé du backend radar :
 Les modifications sont appliquées sans redémarrage du backend. En cas de
 redémarrage du backend, la configuration runtime est relue depuis le volume.
 
-> Le service admin utilise HTTP Basic sur le réseau local. Ne pas l'exposer sur
-> Internet sans reverse proxy HTTPS et sans renforcer l'authentification.
+> Les identifiants par défaut `admin` / `admin` sont destinés à un usage local.
+> Les changer impérativement avant toute exposition réseau, et ne pas exposer
+> le service admin sur Internet sans reverse proxy HTTPS.
 
-Les secrets sont dans `.env`. Pour les régénérer :
+Le mot de passe admin et le jeton interne sont dans `.env`. Pour générer des
+valeurs fortes :
 
 ```bash
 python3 - <<'PY'
