@@ -700,33 +700,138 @@ h1 span {
    Adaptation portrait / petites hauteurs
    ========================================================================== */
 
-@media (max-aspect-ratio: 1/1) {
+/* Portrait : scope en haut, console compacte en bas, sans défilement. */
+@media (orientation: portrait) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   #app {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(58vh, 1.15fr) auto;
-    height: auto;
-    min-height: 100vh;
-    min-height: 100dvh;
-    overflow: visible;
+    grid-template-rows: minmax(0, 56vh) minmax(0, 44vh);
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .scope {
-    min-height: 58vh;
+    min-height: 0;
     border-right: 0;
     border-bottom: 1px solid var(--green-line);
   }
 
   .console {
-    min-height: 42vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head head"
+      "clock metrics"
+      "contacts contacts"
+      "foot foot";
+    gap: 5px 7px;
+    min-height: 0;
+    padding: 8px 10px;
     border-top: 0;
+    overflow: hidden;
+  }
+
+  .console__head {
+    grid-area: head;
+    padding-bottom: 4px;
+  }
+
+  .console__head .brand__mark {
+    width: 21px;
+    height: 21px;
+  }
+
+  h1 {
+    font-size: clamp(14px, 4vw, 20px);
+  }
+
+  .clock-block {
+    display: flex;
+    grid-area: clock;
+    flex-direction: column;
+    justify-content: center;
+    padding: 5px 7px;
+  }
+
+  .clock-line {
+    gap: 5px;
+    margin-top: 0;
+  }
+
+  .clock-line time {
+    font-size: clamp(23px, 6.7vw, 34px);
+    line-height: 1;
+  }
+
+  .clock-line span {
+    display: none;
+  }
+
+  .clock-date {
+    font-size: clamp(7px, 2vw, 9px);
+  }
+
+  .metrics {
+    grid-area: metrics;
+    gap: 5px;
+  }
+
+  .metric {
+    min-height: 0;
+    padding: 4px 6px;
+  }
+
+  .metric__number {
+    font-size: clamp(21px, 6.2vw, 32px);
+  }
+
+  .metric__sub {
+    font-size: clamp(5.5px, 1.8vw, 8px);
+  }
+
+  .metric:first-child .metric__sub {
+    display: none;
+  }
+
+  .state-line strong {
+    font-size: clamp(9px, 2.6vw, 12px);
+  }
+
+  .contacts-panel {
+    grid-area: contacts;
+    min-height: 0;
   }
 
   .contacts {
-    max-height: 230px;
+    max-height: none;
+  }
+
+  .contact {
+    min-height: clamp(27px, 3.5vh, 34px);
+    padding: 2px 4px;
+  }
+
+  .contact__callsign {
+    font-size: clamp(9px, 2.7vw, 12px);
+  }
+
+  .contact__sub {
+    font-size: clamp(6px, 1.9vw, 8px);
+  }
+
+  .contact__alt {
+    font-size: clamp(8px, 2.5vw, 11px);
+  }
+
+  .console__foot {
+    grid-area: foot;
+    padding-top: 4px;
   }
 }
 

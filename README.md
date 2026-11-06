@@ -14,6 +14,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
+- Modes paysage 18:9 et portrait compact, sans défilement.
 - Cache serveur de 2,5 s, polling frontend de 3 s.
 - Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
 
@@ -262,13 +263,13 @@ backend.
    http://192.168.1.42:8000
    ```
 
-4. Passer le téléphone en paysage et appuyer sur le bouton plein écran en haut à
-   droite de la console.
+4. Appuyer sur le bouton plein écran en haut à droite de la console. Le layout
+   s'adapte automatiquement au paysage 18:9 ou au portrait.
 
 5. Pour masquer complètement la barre d'adresse, créer une **Web App** depuis
    Morph Browser (menu → ajout à l'écran d'accueil / application web). Le
-   manifeste fourni demande déjà `display: fullscreen` et
-   `orientation: landscape`.
+   manifeste fourni demande déjà `display: fullscreen` et accepte les deux
+   orientations.
 
 6. Désactiver la mise en veille de l'écran dans les réglages Ubuntu Touch.
    L'application tente également d'activer l'API Wake Lock au premier appui.

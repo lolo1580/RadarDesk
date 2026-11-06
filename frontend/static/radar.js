@@ -1212,16 +1212,19 @@
       updateSource(meta.upstream, meta.fallback);
       setText(dom.lastUpdate, formatUtcStamp(meta.lastSuccess));
 
-      const sourceLabel = (meta.upstream || "UPSTREAM").toUpperCase();
       const detailParts = [];
       if (meta.fallback) {
         detailParts.push("SECOURS");
       }
-      detailParts.push(sourceLabel);
       if (meta.cacheAge !== null) {
-        detailParts.push(`${meta.cacheAge.toFixed(1)}S`);
+        detailParts.push(
+          meta.fallback ? `${meta.cacheAge.toFixed(1)}S` : `MAJ ${meta.cacheAge.toFixed(1)}S`,
+        );
       }
-      setStreamState(meta.stale ? "stale" : "live", detailParts.join(" · "));
+      setStreamState(
+        meta.stale ? "stale" : "live",
+        detailParts.length ? detailParts.join(" · ") : "FLUX ACTIF",
+      );
     } catch (error) {
       state.failures += 1;
       const timedOut = error && error.name === "AbortError";
@@ -1305,14 +1308,6 @@
           await document.documentElement.requestFullscreen({ navigationUI: "hide" });
         } catch {
           await document.documentElement.requestFullscreen();
-        }
-        if (screen.orientation && typeof screen.orientation.lock === "function") {
-          try {
-            await screen.orientation.lock("landscape");
-          } catch {
-            // Le navigateur peut refuser le verrouillage ; l'orientation
-            // reste contrôlée par le système.
-          }
         }
       } else {
         await document.exitFullscreen();
