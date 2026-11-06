@@ -213,7 +213,12 @@
 
   async function saveConfig(event) {
     event.preventDefault();
-    if (busy || !dom.form.reportValidity()) {
+    if (busy) {
+      return;
+    }
+    if (!dom.form.checkValidity()) {
+      dom.form.reportValidity();
+      setMessage("Vérifier les champs en rouge avant d'appliquer.", "error");
       return;
     }
 
