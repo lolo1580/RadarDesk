@@ -57,6 +57,7 @@
     utcTime: document.getElementById("utcTime"),
     utcDate: document.getElementById("utcDate"),
     targetCount: document.getElementById("targetCount"),
+    targetScope: document.getElementById("targetScope"),
     streamMetric: document.getElementById("streamMetric"),
     streamState: document.getElementById("streamState"),
     streamDetail: document.getElementById("streamDetail"),
@@ -498,6 +499,7 @@
     for (const value of document.querySelectorAll(".range-value")) {
       setText(value, String(Math.round(distNm)));
     }
+    setText(dom.targetScope, `DANS ${Math.round(distNm)} NM`);
   }
 
   function getRangeSteps() {
