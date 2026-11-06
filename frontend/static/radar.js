@@ -66,10 +66,7 @@
     sourceMode: document.getElementById("sourceMode"),
     lastUpdate: document.getElementById("lastUpdate"),
     hudCoords: document.getElementById("hudCoords"),
-    hudRange: document.getElementById("hudRange"),
     hudLink: document.getElementById("hudLink"),
-    rangeDown: document.getElementById("rangeDown"),
-    rangeUp: document.getElementById("rangeUp"),
   };
 
   const ctx = dom.canvas.getContext("2d", { alpha: false, desynchronized: true });
@@ -498,7 +495,9 @@
       dom.hudCoords,
       `${formatCoordinate(lat, "N", "S", 2)} ${formatCoordinate(lon, "E", "W", 3)}`,
     );
-    setText(dom.hudRange, String(Math.round(distNm)));
+    for (const value of document.querySelectorAll(".range-value")) {
+      setText(value, String(Math.round(distNm)));
+    }
   }
 
   function getRangeSteps() {
@@ -517,8 +516,14 @@
   function updateRangeButtons() {
     const steps = getRangeSteps();
     const current = state.config.distNm;
-    dom.rangeDown.disabled = !steps.some((value) => value < current);
-    dom.rangeUp.disabled = !steps.some((value) => value > current);
+    const canDown = steps.some((value) => value < current);
+    const canUp = steps.some((value) => value > current);
+    for (const button of document.querySelectorAll('[data-range-action="down"]')) {
+      button.disabled = !canDown;
+    }
+    for (const button of document.querySelectorAll('[data-range-action="up"]')) {
+      button.disabled = !canUp;
+    }
   }
 
   function setRange(value) {
@@ -1609,8 +1614,11 @@
   }
 
   dom.fullscreenBtn.addEventListener("click", toggleFullscreen);
-  dom.rangeDown.addEventListener("click", () => shiftRange(-1));
-  dom.rangeUp.addEventListener("click", () => shiftRange(1));
+  for (const button of document.querySelectorAll("[data-range-action]")) {
+    button.addEventListener("click", () => {
+      shiftRange(button.dataset.rangeAction === "up" ? 1 : -1);
+    });
+  }
   document.addEventListener("fullscreenchange", () => {
     window.setTimeout(resizeCanvas, 80);
   });

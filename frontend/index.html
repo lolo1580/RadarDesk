@@ -36,11 +36,14 @@
           <span class="hud-value" id="hudCoords">46.8687N 006.9416E</span>
         </div>
 
-        <div class="range-control" role="group" aria-label="Distance d'affichage">
-          <button id="rangeDown" type="button" title="Diminuer la distance"
+        <div class="range-control range-control--scope" role="group"
+             aria-label="Distance d'affichage">
+          <button class="range-button" data-range-action="down" type="button"
+                  title="Diminuer la distance"
                   aria-label="Diminuer la distance d'affichage">&minus;</button>
-          <span class="range-readout" aria-live="polite">RANGE <b id="hudRange">50</b> NM</span>
-          <button id="rangeUp" type="button" title="Augmenter la distance"
+          <span class="range-readout" aria-live="polite">RANGE <b class="range-value">50</b> NM</span>
+          <button class="range-button" data-range-action="up" type="button"
+                  title="Augmenter la distance"
                   aria-label="Augmenter la distance d'affichage">+</button>
         </div>
 
@@ -98,6 +101,16 @@
       <section class="contacts-panel" aria-labelledby="contactsTitle">
         <div class="section-heading">
           <h2 id="contactsTitle">CONTACTS PRIORITAIRES</h2>
+          <div class="range-control range-control--console" role="group"
+               aria-label="Distance d'affichage">
+            <button class="range-button" data-range-action="down" type="button"
+                    title="Diminuer la distance"
+                    aria-label="Diminuer la distance d'affichage">&minus;</button>
+            <span class="range-readout" aria-live="polite">RANGE <b class="range-value">50</b> NM</span>
+            <button class="range-button" data-range-action="up" type="button"
+                    title="Augmenter la distance"
+                    aria-label="Augmenter la distance d'affichage">+</button>
+          </div>
           <span id="contactCount">00/00</span>
         </div>
         <ol class="contacts" id="contactList">

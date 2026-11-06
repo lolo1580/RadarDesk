@@ -262,6 +262,10 @@ button {
   font-weight: 700;
 }
 
+.range-control--console {
+  display: none;
+}
+
 #hudLink {
   color: var(--muted);
 }
@@ -907,6 +911,31 @@ h1 span {
   .contacts-panel {
     grid-area: contacts;
     min-height: 0;
+  }
+
+  .range-control--scope {
+    display: none;
+  }
+
+  .range-control--console {
+    position: static;
+    display: flex;
+    padding: 2px;
+    border-color: var(--green-faint);
+    background: rgba(0, 0, 0, 0.38);
+    box-shadow: none;
+  }
+
+  .range-control--console .range-button {
+    width: 22px;
+    height: 22px;
+    font-size: 13px;
+  }
+
+  .range-control--console .range-readout {
+    padding: 0 3px;
+    font-size: 7px;
+    letter-spacing: 0.08em;
   }
 
   .contacts {

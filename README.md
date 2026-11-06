@@ -15,6 +15,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
+  En portrait, le réglage est intégré à l'en-tête des contacts prioritaires.
 - Gestion visuelle des squawks `7500`, `7600`, `7700` et indices militaires.
 - Console : horloge UTC, compteur de cibles, 5 contacts prioritaires.
 - Modes paysage 18:9 et portrait compact, sans défilement.
