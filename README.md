@@ -25,7 +25,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   avec bascule vers les contacts prioritaires.
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
-- Cinq styles de radar : phosphore vert, ambre CRT, bleu glacé, monochrome et ATC moderne.
+- Trois styles de radar : phosphore vert, monochrome et ATC moderne.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
 
@@ -206,7 +206,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
-| `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `amber`, `ice`, `mono` ou `atc` |
+| `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
 | `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather`, `metar_taf` ou `checkwx` |
 | `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
 | `CHECKWX_API_KEY` | — | Clé API CheckWX |
@@ -442,12 +442,10 @@ La génération et le filtrage du jeu de données sont décrits dans
 
 ## Styles de radar
 
-Cinq ambiances sont disponibles, sélectionnables dans
+Trois ambiances sont disponibles, sélectionnables dans
 **Administration → AFFICHAGE → STYLE RADAR** :
 
 - `phosphor` : phosphore vert historique ;
-- `amber` : tube CRT ambre ;
-- `ice` : bleu glacé ;
 - `mono` : monochrome blanc cassé ;
 - `atc` : affichage ATC moderne, fond ardoise, lignes fines, blocs de données et
   suppression des effets CRT.

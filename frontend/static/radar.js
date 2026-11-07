@@ -31,22 +31,6 @@
       bright: "#eaffef",
       focus: "#c4ffd8",
     },
-    amber: {
-      rgb: "255, 176, 0",
-      color: "#ffb000",
-      label: "#ffe4b0",
-      detail: "#b98232",
-      bright: "#fff3d0",
-      focus: "#ffe4b0",
-    },
-    ice: {
-      rgb: "125, 211, 252",
-      color: "#7dd3fc",
-      label: "#dcf6ff",
-      detail: "#5598b8",
-      bright: "#f0fcff",
-      focus: "#dcf6ff",
-    },
     mono: {
       rgb: "214, 230, 220",
       color: "#d6e6dc",

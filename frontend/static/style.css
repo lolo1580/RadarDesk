@@ -23,30 +23,6 @@
   --console-width: clamp(310px, 31.5vw, 390px);
 }
 
-html[data-theme="amber"] {
-  --phosphor-rgb: 255, 176, 0;
-  --green: #ffb000;
-  --green-bright: #ffe4b0;
-  --green-soft: #ffcb66;
-  --green-mid: #b97e22;
-  --green-dim: #3b2608;
-  --text: #e7c58a;
-  --muted: #a36b20;
-  --faint: #5a3a12;
-}
-
-html[data-theme="ice"] {
-  --phosphor-rgb: 125, 211, 252;
-  --green: #7dd3fc;
-  --green-bright: #dcf6ff;
-  --green-soft: #b6e8ff;
-  --green-mid: #4d91b5;
-  --green-dim: #0c2f42;
-  --text: #b9e5f7;
-  --muted: #4b8ca8;
-  --faint: #24536a;
-}
-
 html[data-theme="mono"] {
   --phosphor-rgb: 214, 230, 220;
   --green: #d6e6dc;

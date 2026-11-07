@@ -68,9 +68,9 @@ METAR_TAF_API_KEY = os.getenv("METAR_TAF_API_KEY", "").strip()
 CHECKWX_API_KEY = os.getenv("CHECKWX_API_KEY", "").strip()
 METAR_PROVIDERS = {"aviationweather", "metar_taf", "checkwx"}
 RADAR_STYLE = os.getenv("ADSB_RADAR_STYLE", "phosphor").strip().lower()
-RADAR_STYLES = {"phosphor", "amber", "ice", "mono", "atc"}
+RADAR_STYLES = {"phosphor", "mono", "atc"}
 if RADAR_STYLE not in RADAR_STYLES:
-    raise RuntimeError("ADSB_RADAR_STYLE doit être phosphor, amber, ice, mono ou atc.")
+    raise RuntimeError("ADSB_RADAR_STYLE doit être phosphor, mono ou atc.")
 if METAR_PROVIDER not in METAR_PROVIDERS:
     raise RuntimeError(
         "ADSB_METAR_PROVIDER doit être aviationweather, metar_taf ou checkwx."
