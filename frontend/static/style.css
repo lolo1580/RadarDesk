@@ -59,6 +59,41 @@ html[data-theme="mono"] {
   --faint: #5a6f64;
 }
 
+html[data-theme="atc"] {
+  --phosphor-rgb: 95, 180, 255;
+  --green: #5fb4ff;
+  --green-bright: #edf7ff;
+  --green-soft: #b7dcff;
+  --green-mid: #4a7ea6;
+  --green-dim: #123047;
+  --black: #071018;
+  --text: #d7e8f7;
+  --muted: #7fa3bd;
+  --faint: #4b6b82;
+}
+
+html[data-theme="atc"] .crt::before,
+html[data-theme="atc"] .crt::after,
+html[data-theme="atc"] .scope::before {
+  display: none;
+}
+
+html[data-theme="atc"] h1,
+html[data-theme="atc"] .clock-line time,
+html[data-theme="atc"] .metric__number,
+html[data-theme="atc"] .nearest-airport__head strong,
+html[data-theme="atc"] .hud-value {
+  text-shadow: none;
+}
+
+html[data-theme="atc"] .console {
+  background: var(--black);
+}
+
+html[data-theme="atc"] .scope {
+  background: var(--black);
+}
+
 *,
 *::before,
 *::after {

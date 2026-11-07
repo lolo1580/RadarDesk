@@ -55,6 +55,16 @@
       bright: "#ffffff",
       focus: "#ffffff",
     },
+    atc: {
+      rgb: "95, 180, 255",
+      color: "#5fb4ff",
+      label: "#edf7ff",
+      detail: "#89b4d5",
+      bright: "#ffffff",
+      focus: "#b7dcff",
+      background: "#071018",
+      atc: true,
+    },
   };
   let currentRadarStyle = "phosphor";
   let currentRadarTheme = RADAR_THEMES.phosphor;
@@ -969,13 +979,14 @@
     const center = cssSize / 2;
     const trailAngle = 90 * DEG;
     const steps = 72;
+    const trailStrength = currentRadarTheme.atc ? 0.075 : 0.17;
 
     // Rémanence angulaire : 90° derrière le faisceau, plus dense près de la ligne.
     for (let index = 0; index < steps; index += 1) {
       const start = -trailAngle + (trailAngle * index) / steps;
       const end = -trailAngle + (trailAngle * (index + 1)) / steps + 0.0005;
       const progress = (index + 1) / steps;
-      const alpha = 0.17 * Math.pow(progress, 2.4);
+      const alpha = trailStrength * Math.pow(progress, 2.4);
       g.beginPath();
       g.moveTo(center, center);
       g.arc(center, center, R, start, end);
@@ -1849,7 +1860,9 @@
       const y = target._y;
       const age = (phase - target.bearingRad + TAU) % TAU;
       const freshness = 1 - age / TAU;
-      let intensity = 0.2 + 0.8 * Math.pow(freshness, 2.4);
+      let intensity = currentRadarTheme.atc
+        ? 0.94
+        : 0.2 + 0.8 * Math.pow(freshness, 2.4);
       if (state.focusedHex === target.hex) {
         intensity = Math.max(intensity, 0.9);
       }
@@ -1914,15 +1927,16 @@
         ctx.fill();
       }
 
-      ctx.globalAlpha = 0.035 + 0.16 * intensity;
+      const haloScale = currentRadarTheme.atc ? 0.55 : 1;
+      ctx.globalAlpha = (0.035 + 0.16 * intensity) * (currentRadarTheme.atc ? 0.7 : 1);
       ctx.fillStyle = target.style.color;
       ctx.beginPath();
-      ctx.arc(x, y, 5.5 + 6 * intensity, 0, TAU);
+      ctx.arc(x, y, (5.5 + 6 * intensity) * haloScale, 0, TAU);
       ctx.fill();
 
-      ctx.globalAlpha = 0.12 + 0.2 * intensity;
+      ctx.globalAlpha = (0.12 + 0.2 * intensity) * (currentRadarTheme.atc ? 0.7 : 1);
       ctx.beginPath();
-      ctx.arc(x, y, 3.2 + 2.4 * intensity, 0, TAU);
+      ctx.arc(x, y, (3.2 + 2.4 * intensity) * haloScale, 0, TAU);
       ctx.fill();
 
       ctx.save();
@@ -1984,7 +1998,9 @@
         continue;
       }
       ctx.textAlign = target._labelAlign;
-      ctx.globalAlpha = 0.42 + 0.42 * target._intensity;
+      ctx.globalAlpha = currentRadarTheme.atc
+        ? 0.85
+        : 0.42 + 0.42 * target._intensity;
       ctx.fillStyle = target.style.detailColor;
       ctx.fillText(target.detailLabel, target._labelX, target._labelY + view.labelFont + 1);
     }
@@ -2036,7 +2052,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "#000000";
+    ctx.fillStyle = currentRadarTheme.background || "#000000";
     ctx.fillRect(0, 0, width, height);
 
     if (weatherRadar.canvas) {
