@@ -1,8 +1,9 @@
 # RadarDesk — Radar ADS-B Docker
 
 **RadarDesk** est un scope radar militaire / CRT en HTML5 Canvas, avec un
-backend FastAPI, un frontend statique servi par Nginx et un service
-d'administration séparé, le tout orchestré par Docker Compose.
+backend FastAPI, un frontend mobile statique servi par Nginx, une interface
+desktop standard et un service d'administration séparé, le tout orchestré par
+Docker Compose.
 
 Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 
@@ -28,8 +29,11 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
+- Interface desktop standard sur `8083` : carte Leaflet, sans balayage ni
+  effets CRT, avec table de flotte, filtres, tri, export CSV et fiches cibles.
 - Cache serveur de 4 s, polling frontend de 3 s.
-- Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
+- Aucune ressource JavaScript/CSS frontend externe : Leaflet est embarqué
+  localement, compatible Morph Browser / QtWebEngine.
 
 > Outil de visualisation uniquement. Ne pas utiliser pour la navigation aérienne
 > ou une décision opérationnelle.
@@ -67,9 +71,14 @@ Airplanes.live     adsb.lol
 └───────────────────────────┘
 ```
 
-Le frontend mobile (`8081`), l'administration (`8082`) et la console desktop
-avancée (`8083`) sont exposés sur la machine hôte. Le backend radar n'est pas
+Le frontend mobile (`8081`), l'administration (`8082`) et l'interface desktop
+(`8083`) sont exposés sur la machine hôte. Le backend radar n'est pas
 accessible directement depuis l'extérieur du réseau Docker.
+
+L'interface desktop est une application statique autonome servie par son propre
+Nginx. Elle embarque Leaflet localement, utilise un fond de carte sombre Esri
+sans clé API et relaie `/api/` vers le backend ainsi que `/data/` vers le
+frontend mobile pour partager les mêmes données aéroports/pistes.
 
 ## Arborescence
 
@@ -95,22 +104,34 @@ RadarDesk/
 │       ├── admin.js
 │       └── data/
 │           └── airports.json
-└── frontend/
+├── frontend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── nginx.conf
+│   ├── index.html
+│   └── static/
+│       ├── style.css
+│       ├── radar.js
+│       ├── icon.svg
+│       ├── manifest.webmanifest
+│       └── data/
+│           ├── airports.json
+│           ├── runways.json
+│           └── README.txt
+└── desktop/
     ├── Dockerfile
-    ├── Dockerfile.desktop
     ├── .dockerignore
     ├── nginx.conf
-    ├── nginx-desktop.conf
     ├── index.html
-    └── static/
-        ├── style.css
-        ├── radar.js
-        ├── icon.svg
-        ├── manifest.webmanifest
-        └── data/
-            ├── airports.json
-            ├── runways.json
-            └── README.txt
+    ├── style.css
+    ├── app.js
+    ├── favicon.svg
+    └── vendor/
+        └── leaflet/
+            ├── leaflet.js
+            ├── leaflet.css
+            ├── LICENSE
+            └── images/
 ```
 
 ## Démarrage rapide
@@ -125,7 +146,7 @@ cd RadarDesk
 cp .env.example .env
 # Remplacer impérativement ADSB_ADMIN_PASSWORD avant exposition réseau.
 
-# Construire et démarrer les deux conteneurs
+# Construire et démarrer tous les services
 docker compose up -d --build
 
 # Vérifier l'état
@@ -338,19 +359,25 @@ Endpoint interne non exposé par Nginx. Il recharge le fichier
 correspondant à `ADSB_INTERNAL_TOKEN`. Le service d'administration l'appelle
 après chaque modification.
 
-## Interface desktop avancée
+## Interface desktop standard
 
-Le service `desktop` reprend le scope radar sur un troisième port TCP et ajoute
-un panneau opérationnel :
+Le service `desktop` est une interface dédiée sur un troisième port TCP. Elle
+remplace volontairement le scope PPI par une carte standard, sans balayage
+radar, rémanence phosphore ni effets CRT :
 
+- fond de carte sombre Esri et marqueurs avions orientés selon leur cap ;
+- aéroports et pistes superposés selon la portée sélectionnée ;
+- badges METAR VFR/MVFR/IFR/LIFR et fiche météo au clic sur un aéroport ;
+- couche de précipitations RainViewer activable ;
 - table complète des cibles dans la bulle ;
 - recherche par indicatif, type, hex ou squawk ;
 - filtres en vol / au sol / urgences ;
 - tri par indicatif, type, altitude, vitesse, squawk ou distance ;
-- sélection d'une ligne pour focaliser la cible sur le radar ;
-- fiche détaillée de la cible sélectionnée ;
+- sélection d'une ligne ou d'un marqueur pour centrer la carte et afficher la
+  fiche détaillée de la cible ;
 - export CSV de la sélection filtrée ;
-- accès à 8083, sur le même backend et les mêmes données que le radar mobile.
+- mêmes backend, configuration et données que le radar mobile ;
+- Leaflet 1.9.4 embarqué localement, sans CDN JavaScript/CSS.
 
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 

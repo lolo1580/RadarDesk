@@ -170,61 +170,6 @@
       </footer>
     </aside>
 
-    <aside class="fleet-panel" id="fleetPanel" aria-label="Console de flotte ADS-B desktop">
-      <header class="fleet-head">
-        <div>
-          <p class="eyebrow">DESKTOP / OPERATIONS</p>
-          <h2>FLOTTE ADS-B</h2>
-        </div>
-        <span class="fleet-count" id="fleetCount">00</span>
-      </header>
-
-      <div class="fleet-tools">
-        <input id="fleetSearch" type="search" placeholder="Indicatif, type, hex, squawk…"
-               aria-label="Rechercher une cible" autocomplete="off">
-        <select id="fleetFilter" aria-label="Filtrer les cibles">
-          <option value="all">Tous</option>
-          <option value="air">En vol</option>
-          <option value="ground">Au sol</option>
-          <option value="emergency">Urgences</option>
-        </select>
-        <button id="fleetExport" type="button" title="Exporter la sélection en CSV">CSV</button>
-      </div>
-
-      <div class="fleet-table-wrap">
-        <table class="fleet-table">
-          <thead>
-            <tr>
-              <th data-fleet-sort="callsign">INDICATIF</th>
-              <th data-fleet-sort="type">TYPE</th>
-              <th data-fleet-sort="altitude">ALT.</th>
-              <th data-fleet-sort="speed">GS</th>
-              <th data-fleet-sort="squawk">SQK</th>
-              <th data-fleet-sort="distance">DIST.</th>
-            </tr>
-          </thead>
-          <tbody id="fleetRows"></tbody>
-        </table>
-        <p class="fleet-empty" id="fleetEmpty">AUCUNE CIBLE DANS LA BULLE</p>
-      </div>
-
-      <section class="fleet-detail" id="fleetDetail" aria-live="polite">
-        <p class="section-label">CIBLE SÉLECTIONNÉE</p>
-        <div class="fleet-detail__head">
-          <strong id="fleetDetailCallsign">—</strong>
-          <span id="fleetDetailType">—</span>
-        </div>
-        <div class="fleet-detail__grid">
-          <div><span>ALTITUDE</span><strong id="fleetDetailAlt">—</strong></div>
-          <div><span>VITESSE</span><strong id="fleetDetailSpeed">—</strong></div>
-          <div><span>CAP</span><strong id="fleetDetailTrack">—</strong></div>
-          <div><span>SQUAWK</span><strong id="fleetDetailSquawk">—</strong></div>
-          <div><span>DISTANCE</span><strong id="fleetDetailDistance">—</strong></div>
-          <div><span>AZIMUT</span><strong id="fleetDetailBearing">—</strong></div>
-          <div class="fleet-detail__wide"><span>POSITION</span><strong id="fleetDetailPosition">—</strong></div>
-        </div>
-      </section>
-    </aside>
   </div>
 
   <script src="/static/radar.js" defer></script>

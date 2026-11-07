@@ -84,12 +84,14 @@ services:
 
   desktop:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile.desktop
+      context: ./desktop
+      dockerfile: Dockerfile
     ports:
       - "${ADSB_DESKTOP_PORT:-8083}:80"
     depends_on:
       backend:
+        condition: service_healthy
+      frontend:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true

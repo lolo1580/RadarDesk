@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="color-scheme" content="dark">
+  <title>RadarDesk Desktop</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="desktop">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">RADARDESK</p>
+          <h1>DESKTOP <span>OPS</span></h1>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="field field--range">
+          <span>PORTÉE</span>
+          <select id="rangeSelect" aria-label="Portée d'affichage"></select>
+        </label>
+        <label class="toggle">
+          <input id="weatherToggle" type="checkbox" checked>
+          <span>MÉTÉO</span>
+        </label>
+        <label class="toggle">
+          <input id="runwayToggle" type="checkbox" checked>
+          <span>PISTES</span>
+        </label>
+
+        <div class="stream" id="stream" data-state="connecting" aria-live="polite">
+          <i class="stream-dot" aria-hidden="true"></i>
+          <span id="streamState">CONNEXION</span>
+          <small id="streamDetail">—</small>
+        </div>
+
+        <div class="counter">
+          <strong id="targetCount">00</strong>
+          <span>CIBLES</span>
+        </div>
+
+        <div class="clock">
+          <time id="utcTime" datetime="">--:--:--</time>
+          <span>UTC</span>
+          <small id="utcDate">-- --- ----</small>
+        </div>
+
+        <button class="icon-button" id="fullscreenBtn" type="button"
+                aria-label="Passer en plein écran" title="Plein écran">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="map-panel" aria-label="Carte de suivi ADS-B">
+        <div id="map"></div>
+        <div class="map-hud map-hud--left">
+          <span class="map-label">CENTRE RX</span>
+          <strong id="mapCenter">—</strong>
+          <span id="mapAirport" class="map-sub"></span>
+        </div>
+        <div class="map-hud map-hud--right">
+          <span class="map-label">COUVERTURE</span>
+          <strong><span id="mapRange">50</span> NM</strong>
+          <span id="mapRadiusLabel" class="map-sub">RAYON</span>
+        </div>
+        <div class="map-source">
+          <span id="sourceName">EN ATTENTE</span>
+          <span id="lastUpdate">—</span>
+        </div>
+      </section>
+
+      <aside class="ops-panel" aria-label="Console opérationnelle">
+        <header class="ops-head">
+          <div>
+            <p class="eyebrow">OPERATIONS</p>
+            <h2>FLOTTE ADS-B</h2>
+          </div>
+          <span class="ops-count" id="opsCount">00</span>
+        </header>
+
+        <div class="ops-tools">
+          <input id="searchInput" type="search" placeholder="Indicatif, type, hex, squawk…"
+                 aria-label="Rechercher une cible" autocomplete="off">
+          <select id="filterSelect" aria-label="Filtrer les cibles">
+            <option value="all">Tous</option>
+            <option value="air">En vol</option>
+            <option value="ground">Au sol</option>
+            <option value="emergency">Urgences</option>
+          </select>
+          <button id="exportBtn" type="button" title="Exporter en CSV">CSV</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="aircraft-table">
+            <thead>
+              <tr>
+                <th data-sort="callsign">INDICATIF</th>
+                <th data-sort="type">TYPE</th>
+                <th data-sort="altitude">ALT.</th>
+                <th data-sort="speed">GS</th>
+                <th data-sort="squawk">SQK</th>
+                <th data-sort="distance">DIST.</th>
+              </tr>
+            </thead>
+            <tbody id="aircraftRows"></tbody>
+          </table>
+          <p class="empty" id="emptyState">AUCUNE CIBLE DANS LA ZONE</p>
+        </div>
+
+        <section class="selection" aria-live="polite">
+          <p class="section-label">CIBLE SÉLECTIONNÉE</p>
+          <div class="selection-head">
+            <strong id="selectedCallsign">—</strong>
+            <span id="selectedType">—</span>
+          </div>
+          <div class="selection-grid">
+            <div><span>ALTITUDE</span><strong id="selectedAlt">—</strong></div>
+            <div><span>VITESSE</span><strong id="selectedSpeed">—</strong></div>
+            <div><span>CAP</span><strong id="selectedTrack">—</strong></div>
+            <div><span>SQUAWK</span><strong id="selectedSquawk">—</strong></div>
+            <div><span>DISTANCE</span><strong id="selectedDistance">—</strong></div>
+            <div><span>AZIMUT</span><strong id="selectedBearing">—</strong></div>
+            <div class="selection-wide"><span>POSITION</span><strong id="selectedPosition">—</strong></div>
+          </div>
+        </section>
+
+        <footer class="ops-foot">
+          <span>1090 MHZ / ADS-B</span>
+          <span id="latencyLabel">—</span>
+        </footer>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
