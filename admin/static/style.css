@@ -294,6 +294,25 @@ select {
   grid-column: 1 / -1;
 }
 
+.field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.field-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--green);
+}
+
+.stats-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .field-wide[hidden] {
   display: none;
 }

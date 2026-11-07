@@ -83,6 +83,15 @@ class RuntimeConfigPayload(BaseModel):
     radar_style: Literal["phosphor", "mono", "atc"]
     location_mode: Literal["coords", "airport"] = "coords"
     airport_icao: str | None = None
+    influx_enabled: bool = False
+    influx_url: str = ""
+    influx_org: str = ""
+    influx_bucket: str = ""
+    influx_token: str | None = None
+    influx_measurement: str = Field(
+        default="adsb_stats", pattern=r"^[A-Za-z0-9_.-]+$"
+    )
+    influx_interval_s: int = Field(default=30, ge=5, le=3600)
 
     @model_validator(mode="after")
     def validate_coherence(self) -> RuntimeConfigPayload:
@@ -97,6 +106,13 @@ class RuntimeConfigPayload(BaseModel):
             raise ValueError(
                 "La source de secours doit être différente de la primaire."
             )
+        if self.influx_enabled:
+            if not self.influx_url.strip():
+                raise ValueError("L'URL InfluxDB est requise quand l'export est activé.")
+            if not self.influx_org.strip():
+                raise ValueError("L'organisation InfluxDB est requise.")
+            if not self.influx_bucket.strip():
+                raise ValueError("Le bucket InfluxDB est requis.")
         return self
 
 
@@ -249,6 +265,35 @@ async def reload_radar(request: Request) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"status": "reloaded"}
 
 
+async def call_radar_internal(request: Request, path: str) -> dict[str, Any]:
+    if not INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="ADSB_INTERNAL_TOKEN n'est pas configuré.",
+        )
+    try:
+        response = await request.app.state.http.post(
+            f"{RADAR_BACKEND_URL}{path}",
+            headers={"X-Internal-Token": INTERNAL_TOKEN},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Backend radar injoignable ({exc.__class__.__name__}).",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if response.status_code != 200:
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        raise HTTPException(
+            status_code=502,
+            detail=f"Action refusée: {detail or response.status_code}.",
+        )
+    return payload if isinstance(payload, dict) else {}
+
+
 def runtime_snapshot() -> bytes | None:
     if not RUNTIME_CONFIG_FILE.is_file():
         return None
@@ -265,9 +310,22 @@ def restore_runtime_snapshot(snapshot: bytes | None) -> None:
 
 def write_runtime_config(payload: RuntimeConfigPayload) -> None:
     RUNTIME_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    data = payload.model_dump()
+    # Le token n'est jamais renvoyé à l'interface : un champ vide conserve la
+    # valeur déjà présente dans le fichier runtime.
+    if not data.get("influx_token"):
+        existing = None
+        if RUNTIME_CONFIG_FILE.is_file():
+            try:
+                existing = json.loads(RUNTIME_CONFIG_FILE.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                existing = None
+        data["influx_token"] = (
+            str(existing.get("influx_token") or "") if isinstance(existing, dict) else ""
+        )
     temporary = RUNTIME_CONFIG_FILE.with_suffix(".tmp")
     temporary.write_text(
-        json.dumps(payload.model_dump(), indent=2, ensure_ascii=False) + "\n",
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     os.chmod(temporary, 0o644)
@@ -377,6 +435,20 @@ async def api_reset_config(request: Request) -> dict[str, Any]:
         "config": reloaded.get("config"),
         "runtime_file_exists": RUNTIME_CONFIG_FILE.is_file(),
     }
+
+
+@app.post("/api/stats/reset", tags=["admin"])
+async def api_stats_reset(request: Request) -> dict[str, Any]:
+    """Efface l'historique SQLite des statistiques de l'antenne."""
+    payload = await call_radar_internal(request, "/internal/stats/reset")
+    logger.info("Statistiques réinitialisées par l'administrateur.")
+    return payload
+
+
+@app.post("/api/influx/test", tags=["admin"])
+async def api_influx_test(request: Request) -> dict[str, Any]:
+    """Teste l'écriture vers InfluxDB avec la configuration runtime active."""
+    return await call_radar_internal(request, "/internal/influx/test")
 
 
 @app.post("/api/reload", tags=["admin"])

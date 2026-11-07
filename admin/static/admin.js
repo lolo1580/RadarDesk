@@ -19,6 +19,17 @@
     saveBtn: document.getElementById("saveBtn"),
     reloadBtn: document.getElementById("reloadBtn"),
     resetBtn: document.getElementById("resetBtn"),
+    influxEnabled: document.getElementById("influx_enabled"),
+    influxUrl: document.getElementById("influx_url"),
+    influxOrg: document.getElementById("influx_org"),
+    influxBucket: document.getElementById("influx_bucket"),
+    influxToken: document.getElementById("influx_token"),
+    influxMeasurement: document.getElementById("influx_measurement"),
+    influxInterval: document.getElementById("influx_interval_s"),
+    influxHint: document.getElementById("influxHint"),
+    statsHint: document.getElementById("statsHint"),
+    testInfluxBtn: document.getElementById("testInfluxBtn"),
+    resetStatsBtn: document.getElementById("resetStatsBtn"),
   };
 
   const numericFields = [
@@ -84,7 +95,13 @@
 
   function setBusy(value) {
     busy = value;
-    for (const button of [dom.saveBtn, dom.reloadBtn, dom.resetBtn]) {
+    for (const button of [
+      dom.saveBtn,
+      dom.reloadBtn,
+      dom.resetBtn,
+      dom.testInfluxBtn,
+      dom.resetStatsBtn,
+    ]) {
       button.disabled = value;
     }
   }
@@ -257,6 +274,40 @@
         : "metar-taf.com et CheckWX indisponibles : renseigner METAR_TAF_API_KEY ou CHECKWX_API_KEY dans .env puis recréer le backend.";
     }
 
+    if (dom.influxEnabled) {
+      dom.influxEnabled.checked = Boolean(config.influx_enabled);
+    }
+    if (dom.influxUrl) dom.influxUrl.value = config.influx_url || "";
+    if (dom.influxOrg) dom.influxOrg.value = config.influx_org || "";
+    if (dom.influxBucket) dom.influxBucket.value = config.influx_bucket || "";
+    if (dom.influxMeasurement) {
+      dom.influxMeasurement.value = config.influx_measurement || "adsb_stats";
+    }
+    if (dom.influxInterval) {
+      dom.influxInterval.value = String(config.influx_interval_s || 30);
+    }
+    if (dom.influxToken) {
+      dom.influxToken.value = "";
+      dom.influxToken.placeholder = config.influx_token_configured
+        ? "Token configuré — laisser vide pour conserver"
+        : "Token InfluxDB v2";
+    }
+    if (dom.influxHint) {
+      dom.influxHint.classList.toggle(
+        "is-off",
+        Boolean(config.influx_enabled) && !config.influx_token_configured,
+      );
+      dom.influxHint.textContent = config.influx_token_configured
+        ? "InfluxDB v2. Token déjà configuré : laisser le champ vide pour le conserver."
+        : "InfluxDB v2. Aucun token enregistré : renseigner un token avant d'activer l'export.";
+    }
+    if (dom.statsHint) {
+      dom.statsHint.textContent =
+        `Collecte SQLite ${config.stats_enabled ? "active" : "désactivée"} · ` +
+        `échantillon ${Number(config.stats_sample_seconds || 30)} s · ` +
+        `rétention ${Number(config.stats_retention_days || 180)} jours.`;
+    }
+
     const isRuntime = config.config_source === "runtime";
     setText(dom.configSource, isRuntime ? "RUNTIME" : "ENVIRONNEMENT");
     dom.configSource.classList.toggle("is-runtime", isRuntime);
@@ -381,6 +432,17 @@
     } else {
       payload.airport_icao = null;
     }
+
+    payload.influx_enabled = Boolean(dom.influxEnabled?.checked);
+    payload.influx_url = dom.influxUrl?.value.trim() || "";
+    payload.influx_org = dom.influxOrg?.value.trim() || "";
+    payload.influx_bucket = dom.influxBucket?.value.trim() || "";
+    payload.influx_measurement = dom.influxMeasurement?.value.trim() || "adsb_stats";
+    payload.influx_interval_s = Number(dom.influxInterval?.value || 30);
+    const influxToken = dom.influxToken?.value.trim() || "";
+    if (influxToken) {
+      payload.influx_token = influxToken;
+    }
     return payload;
   }
 
@@ -479,6 +541,54 @@
     }
   }
 
+  async function testInflux() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("Test d'écriture InfluxDB avec la configuration active…");
+    try {
+      const result = await api("/api/influx/test", { method: "POST" });
+      if (result.ok) {
+        setMessage("InfluxDB répond et accepte l'écriture de test.", "success");
+      } else {
+        setMessage(`InfluxDB: ${result.detail || "échec du test"}`, "error");
+      }
+    } catch (error) {
+      setMessage(
+        `Échec : ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetStats() {
+    if (busy) return;
+    if (
+      !window.confirm(
+        "Effacer tout l'historique des statistiques de l'antenne ? Cette action est irréversible.",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMessage("Effacement de l'historique…");
+    try {
+      const result = await api("/api/stats/reset", { method: "POST" });
+      setMessage(
+        `Historique effacé (${Number(result.deleted || 0)} relevé(s)).`,
+        "success",
+      );
+    } catch (error) {
+      setMessage(
+        `Échec : ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function scheduleStatusPoll() {
     window.clearTimeout(pollTimer);
     pollTimer = window.setTimeout(async () => {
@@ -490,6 +600,8 @@
   dom.form.addEventListener("submit", saveConfig);
   dom.reloadBtn.addEventListener("click", reloadConfig);
   dom.resetBtn.addEventListener("click", resetConfig);
+  dom.testInfluxBtn.addEventListener("click", testInflux);
+  dom.resetStatsBtn.addEventListener("click", resetStats);
 
   dom.form.elements.namedItem("location_mode").addEventListener("change", syncLocationMode);
   const airportSearchField = dom.form.elements.namedItem("airport_search");

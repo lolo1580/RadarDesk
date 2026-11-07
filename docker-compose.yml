@@ -28,12 +28,24 @@ services:
       ADSB_AIRPORT_ICAO: "${ADSB_AIRPORT_ICAO:-}"
       METAR_TAF_API_KEY: "${METAR_TAF_API_KEY:-}"
       CHECKWX_API_KEY: "${CHECKWX_API_KEY:-}"
+      ADSB_STATS_DB_PATH: /stats/adsb-stats.db
+      ADSB_STATS_ENABLED: "${ADSB_STATS_ENABLED:-true}"
+      ADSB_STATS_SAMPLE_SECONDS: "${ADSB_STATS_SAMPLE_SECONDS:-30}"
+      ADSB_STATS_RETENTION_DAYS: "${ADSB_STATS_RETENTION_DAYS:-180}"
+      ADSB_INFLUX_ENABLED: "${ADSB_INFLUX_ENABLED:-false}"
+      ADSB_INFLUX_URL: "${ADSB_INFLUX_URL:-}"
+      ADSB_INFLUX_ORG: "${ADSB_INFLUX_ORG:-}"
+      ADSB_INFLUX_BUCKET: "${ADSB_INFLUX_BUCKET:-}"
+      ADSB_INFLUX_TOKEN: "${ADSB_INFLUX_TOKEN:-}"
+      ADSB_INFLUX_MEASUREMENT: "${ADSB_INFLUX_MEASUREMENT:-adsb_stats}"
+      ADSB_INFLUX_INTERVAL_S: "${ADSB_INFLUX_INTERVAL_S:-30}"
       ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
       ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
     expose:
       - "8000"
     volumes:
       - admin_data:/data:ro
+      - stats_data:/stats
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -155,3 +167,4 @@ services:
 
 volumes:
   admin_data:
+  stats_data:

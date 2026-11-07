@@ -991,23 +991,8 @@ h1 span {
   line-height: 1.35;
 }
 
-.stats-reset {
-  margin-top: 5px;
-  padding: 4px 6px;
-  color: var(--muted);
-  font: 600 7px var(--sans);
-  letter-spacing: 0.08em;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  cursor: pointer;
-}
-
-.stats-reset:hover,
-.stats-reset:focus-visible {
-  color: var(--accent);
-  border-color: var(--accent);
-  outline: none;
+.stats-note.is-off {
+  color: var(--amber);
 }
 
 .ops-tools {

@@ -22,12 +22,14 @@ import math
 import os
 import re
 import secrets
+import sqlite3
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 
 import httpx
 import uvicorn
@@ -111,6 +113,50 @@ INDEX_FILE = STATIC_DIR / "index.html"
 RUNTIME_CONFIG_FILE = Path(os.getenv("ADSB_RUNTIME_CONFIG_FILE", "/data/runtime.json"))
 INTERNAL_TOKEN = os.getenv("ADSB_INTERNAL_TOKEN", "").strip()
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Statistiques persistantes de l'antenne (SQLite).
+STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
+STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
+STATS_SAMPLE_SECONDS = int(os.getenv("ADSB_STATS_SAMPLE_SECONDS", "30"))
+STATS_RETENTION_DAYS = int(os.getenv("ADSB_STATS_RETENTION_DAYS", "180"))
+STATS_RANGE_STEPS = (5, 10, 25, 50, 75, 100, 125, 150, 200, 250)
+if not 5 <= STATS_SAMPLE_SECONDS <= 3600:
+    raise RuntimeError("ADSB_STATS_SAMPLE_SECONDS doit être compris entre 5 et 3600.")
+if not 1 <= STATS_RETENTION_DAYS <= 3650:
+    raise RuntimeError("ADSB_STATS_RETENTION_DAYS doit être compris entre 1 et 3650.")
+
+# Export InfluxDB v2 (optionnel, surchargeable dans l'administration).
+INFLUX_ENABLED = _env_flag("ADSB_INFLUX_ENABLED", False)
+INFLUX_URL = os.getenv("ADSB_INFLUX_URL", "").strip().rstrip("/")
+INFLUX_ORG = os.getenv("ADSB_INFLUX_ORG", "").strip()
+INFLUX_BUCKET = os.getenv("ADSB_INFLUX_BUCKET", "").strip()
+INFLUX_TOKEN = os.getenv("ADSB_INFLUX_TOKEN", "").strip()
+INFLUX_MEASUREMENT = os.getenv("ADSB_INFLUX_MEASUREMENT", "adsb_stats").strip()
+INFLUX_INTERVAL_S = int(os.getenv("ADSB_INFLUX_INTERVAL_S", "30"))
+if not 5 <= INFLUX_INTERVAL_S <= 3600:
+    raise RuntimeError("ADSB_INFLUX_INTERVAL_S doit être compris entre 5 et 3600.")
+if INFLUX_ENABLED:
+    parsed_influx = urlparse(INFLUX_URL)
+    if (
+        not INFLUX_URL
+        or parsed_influx.scheme not in {"http", "https"}
+        or not parsed_influx.netloc
+        or not INFLUX_ORG
+        or not INFLUX_BUCKET
+        or not INFLUX_TOKEN
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", INFLUX_MEASUREMENT)
+    ):
+        raise RuntimeError(
+            "Configuration InfluxDB incomplète: URL, org, bucket, token et mesure valides requis."
+        )
+
 # ============================================================================
 # FOURNISSEURS
 # ============================================================================
@@ -187,6 +233,13 @@ BASELINE_CONFIG: dict[str, Any] = {
     "radar_style": RADAR_STYLE,
     "location_mode": LOCATION_MODE,
     "airport_icao": AIRPORT_ICAO,
+    "influx_enabled": INFLUX_ENABLED,
+    "influx_url": INFLUX_URL,
+    "influx_org": INFLUX_ORG,
+    "influx_bucket": INFLUX_BUCKET,
+    "influx_token": INFLUX_TOKEN,
+    "influx_measurement": INFLUX_MEASUREMENT,
+    "influx_interval_s": INFLUX_INTERVAL_S,
 }
 
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
@@ -326,6 +379,53 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
     ):
         raise ValueError("Un code OACI valide est requis en mode airport.")
 
+    influx_raw = payload.get("influx_enabled", values["influx_enabled"])
+    if isinstance(influx_raw, bool):
+        influx_enabled = influx_raw
+    elif isinstance(influx_raw, str) and influx_raw.strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        influx_enabled = influx_raw.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        raise ValueError("influx_enabled doit être un booléen.")
+
+    influx_url = str(payload.get("influx_url", values["influx_url"]) or "").strip().rstrip("/")
+    influx_org = str(payload.get("influx_org", values["influx_org"]) or "").strip()
+    influx_bucket = str(payload.get("influx_bucket", values["influx_bucket"]) or "").strip()
+    influx_token = str(payload.get("influx_token", values["influx_token"]) or "").strip()
+    if not influx_token:
+        influx_token = str(values.get("influx_token") or "").strip()
+    influx_measurement = str(
+        payload.get("influx_measurement", values["influx_measurement"]) or ""
+    ).strip()
+    influx_interval_s = round(number("influx_interval_s"))
+
+    if influx_enabled:
+        parsed_influx = urlparse(influx_url)
+        if parsed_influx.scheme not in {"http", "https"} or not parsed_influx.netloc:
+            raise ValueError("L'URL InfluxDB doit commencer par http:// ou https://.")
+        if not influx_org:
+            raise ValueError("L'organisation InfluxDB est requise.")
+        if not influx_bucket:
+            raise ValueError("Le bucket InfluxDB est requis.")
+        if not influx_token:
+            raise ValueError("Le token InfluxDB est requis.")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", influx_measurement):
+            raise ValueError(
+                "La mesure InfluxDB doit contenir uniquement lettres, chiffres, '_', '.' ou '-'."
+            )
+    if not 5 <= influx_interval_s <= 3600:
+        raise ValueError(
+            "L'intervalle d'export InfluxDB doit être compris entre 5 et 3600 s."
+        )
+
     if not -90.0 <= values["lat"] <= 90.0:
         raise ValueError("La latitude doit être comprise entre -90 et 90.")
     if not -180.0 <= values["lon"] <= 180.0:
@@ -353,6 +453,13 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
     values["radar_style"] = radar_style
     values["location_mode"] = location_mode
     values["airport_icao"] = airport_icao if location_mode == "airport" else None
+    values["influx_enabled"] = influx_enabled
+    values["influx_url"] = influx_url
+    values["influx_org"] = influx_org
+    values["influx_bucket"] = influx_bucket
+    values["influx_token"] = influx_token
+    values["influx_measurement"] = influx_measurement
+    values["influx_interval_s"] = influx_interval_s
     return values
 
 
@@ -372,6 +479,8 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
     global METAR_PROVIDER, RADAR_STYLE, LOCATION_MODE, AIRPORT_ICAO
+    global INFLUX_ENABLED, INFLUX_URL, INFLUX_ORG, INFLUX_BUCKET
+    global INFLUX_TOKEN, INFLUX_MEASUREMENT, INFLUX_INTERVAL_S
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
 
@@ -389,6 +498,13 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     RADAR_STYLE = str(values["radar_style"])
     LOCATION_MODE = str(values["location_mode"])
     AIRPORT_ICAO = values["airport_icao"]
+    INFLUX_ENABLED = bool(values.get("influx_enabled", False))
+    INFLUX_URL = str(values.get("influx_url", "")).strip().rstrip("/")
+    INFLUX_ORG = str(values.get("influx_org", "")).strip()
+    INFLUX_BUCKET = str(values.get("influx_bucket", "")).strip()
+    INFLUX_TOKEN = str(values.get("influx_token", "")).strip()
+    INFLUX_MEASUREMENT = str(values.get("influx_measurement", "adsb_stats")).strip()
+    INFLUX_INTERVAL_S = int(values.get("influx_interval_s", 30))
     PRIMARY = PROVIDERS[PRIMARY_PROVIDER]
     FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
     _cache = None
@@ -427,6 +543,17 @@ def config_payload() -> dict[str, Any]:
         "radar_style": RADAR_STYLE,
         "location_mode": LOCATION_MODE,
         "airport_icao": AIRPORT_ICAO,
+        "influx_enabled": INFLUX_ENABLED,
+        "influx_url": INFLUX_URL,
+        "influx_org": INFLUX_ORG,
+        "influx_bucket": INFLUX_BUCKET,
+        "influx_measurement": INFLUX_MEASUREMENT,
+        "influx_interval_s": INFLUX_INTERVAL_S,
+        "influx_token_configured": bool(INFLUX_TOKEN),
+        "stats_enabled": stats_available(),
+        "stats_configured": STATS_ENABLED,
+        "stats_sample_seconds": STATS_SAMPLE_SECONDS,
+        "stats_retention_days": STATS_RETENTION_DAYS,
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
 
@@ -729,6 +856,648 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
 
 
 # ============================================================================
+# STATISTIQUES PERSISTANTES (SQLITE) ET EXPORT INFLUXDB
+# ============================================================================
+
+_stats_db_ok = False
+_stats_db_error: str | None = None
+_last_stats_recorded_ts = 0
+_last_stats_cleanup_day = ""
+_influx_last_error_at = 0.0
+
+
+def stats_available() -> bool:
+    return STATS_ENABLED and _stats_db_ok
+
+
+def _stats_scope() -> str:
+    return f"{LAT:.2f},{LON:.2f}"
+
+
+def _stats_ranges() -> list[int]:
+    ranges = sorted({*STATS_RANGE_STEPS, MAX_RADIUS_NM})
+    return [value for value in ranges if 1 <= value <= MAX_RADIUS_NM]
+
+
+def _effective_stats_range(requested: int | None = None) -> int:
+    base = DIST_NM if requested is None else int(round(requested))
+    target = max(1, min(MAX_RADIUS_NM, base))
+    for value in _stats_ranges():
+        if value >= target:
+            return value
+    ranges = _stats_ranges()
+    return ranges[-1] if ranges else target
+
+
+def _stats_connect() -> sqlite3.Connection:
+    STATS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(STATS_DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _stats_schema() -> None:
+    with closing(_stats_connect()) as conn:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != 3:
+            conn.executescript(
+                """
+                DROP TABLE IF EXISTS snapshots;
+                DROP TABLE IF EXISTS aircraft_seen;
+                """
+            )
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                counts_json TEXT NOT NULL,
+                source TEXT,
+                center_lat REAL NOT NULL,
+                center_lon REAL NOT NULL,
+                max_range_nm REAL NOT NULL,
+                UNIQUE(ts, scope)
+            );
+            CREATE INDEX IF NOT EXISTS idx_snapshots_day_scope_ts
+                ON snapshots(day, scope, ts);
+            CREATE TABLE IF NOT EXISTS aircraft_seen (
+                day TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                hex TEXT NOT NULL,
+                first_seen INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL,
+                callsign TEXT,
+                type TEXT,
+                max_alt INTEGER,
+                min_distance REAL,
+                PRIMARY KEY(day, scope, hex)
+            );
+            CREATE INDEX IF NOT EXISTS idx_aircraft_seen_day_scope
+                ON aircraft_seen(day, scope);
+            """
+        )
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+
+
+def cleanup_stats_db(force: bool = False) -> int:
+    global _last_stats_cleanup_day
+    if not _stats_db_ok:
+        return 0
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    if not force and _last_stats_cleanup_day == today:
+        return 0
+    cutoff = (datetime.now(UTC) - timedelta(days=STATS_RETENTION_DAYS)).strftime(
+        "%Y-%m-%d"
+    )
+    try:
+        with closing(_stats_connect()) as conn:
+            cursor = conn.execute("DELETE FROM snapshots WHERE day < ?", (cutoff,))
+            deleted = max(0, cursor.rowcount)
+            conn.execute("DELETE FROM aircraft_seen WHERE day < ?", (cutoff,))
+            conn.commit()
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("Nettoyage des statistiques impossible: %s", exc)
+        return 0
+    _last_stats_cleanup_day = today
+    if deleted:
+        logger.info(
+            "Statistiques: %d ancien(s) relevé(s) supprimé(s) avant %s.",
+            deleted,
+            cutoff,
+        )
+    return deleted
+
+
+def init_stats_db() -> bool:
+    global _stats_db_ok, _stats_db_error, _last_stats_cleanup_day
+    if not STATS_ENABLED:
+        _stats_db_ok = False
+        _stats_db_error = None
+        return False
+    try:
+        _stats_schema()
+        _stats_db_ok = True
+        _stats_db_error = None
+        _last_stats_cleanup_day = datetime.now(UTC).strftime("%Y-%m-%d")
+        cleanup_stats_db(force=True)
+        logger.info("Base de statistiques SQLite prête: %s", STATS_DB_PATH)
+    except (OSError, sqlite3.Error) as exc:
+        _stats_db_ok = False
+        _stats_db_error = str(exc)
+        logger.error("Base de statistiques indisponible (%s): %s", STATS_DB_PATH, exc)
+    return _stats_db_ok
+
+
+def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
+    global _last_stats_recorded_ts
+    if not _stats_db_ok:
+        return None
+    ts = int(snapshot.fetched_at.timestamp())
+    if ts <= _last_stats_recorded_ts:
+        return None
+    day = datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
+    scope = _stats_scope()
+    ranges = _stats_ranges()
+    default_range = _effective_stats_range()
+    located: list[tuple[AircraftTarget, float]] = []
+    for target in snapshot.aircraft:
+        distance = haversine_nm(LAT, LON, target.lat, target.lon)
+        if distance <= MAX_RADIUS_NM:
+            located.append((target, distance))
+    counts: dict[str, Any] = {}
+    for range_nm in ranges:
+        subset = [
+            (target, distance)
+            for target, distance in located
+            if distance <= range_nm
+        ]
+        airborne = sum(1 for target, _distance in subset if not target.on_ground)
+        ground = len(subset) - airborne
+        emergency = sum(
+            1
+            for target, _distance in subset
+            if target.squawk in {"7500", "7600", "7700"}
+        )
+        altitudes = [
+            target.alt_baro
+            for target, _distance in subset
+            if not target.on_ground and target.alt_baro is not None
+        ]
+        distances = [distance for _target, distance in subset]
+        counts[str(range_nm)] = {
+            "aircraft": len(subset),
+            "airborne": airborne,
+            "ground": ground,
+            "emergency": emergency,
+            "max_alt": max(altitudes, default=None),
+            "average_alt": (
+                round(sum(altitudes) / len(altitudes), 1) if altitudes else None
+            ),
+            "max_distance": (
+                round(max(distances), 2) if distances else None
+            ),
+        }
+    try:
+        with closing(_stats_connect()) as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO snapshots
+                    (ts, day, scope, counts_json, source, center_lat, center_lon,
+                     max_range_nm)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    day,
+                    scope,
+                    json.dumps(counts, separators=(",", ":"), sort_keys=True),
+                    snapshot.source,
+                    LAT,
+                    LON,
+                    float(MAX_RADIUS_NM),
+                ),
+            )
+            if cursor.rowcount == 0:
+                _last_stats_recorded_ts = ts
+                return None
+            for target, distance in located:
+                target_alt = (
+                    target.alt_baro
+                    if not target.on_ground and target.alt_baro is not None
+                    else None
+                )
+                conn.execute(
+                    """
+                    INSERT INTO aircraft_seen
+                        (day, scope, hex, first_seen, last_seen, callsign, type,
+                         max_alt, min_distance)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(day, scope, hex) DO UPDATE SET
+                        last_seen = excluded.last_seen,
+                        callsign = COALESCE(excluded.callsign, aircraft_seen.callsign),
+                        type = COALESCE(excluded.type, aircraft_seen.type),
+                        max_alt = CASE
+                            WHEN excluded.max_alt IS NULL THEN aircraft_seen.max_alt
+                            WHEN aircraft_seen.max_alt IS NULL THEN excluded.max_alt
+                            ELSE MAX(aircraft_seen.max_alt, excluded.max_alt)
+                        END,
+                        min_distance = CASE
+                            WHEN excluded.min_distance IS NULL THEN aircraft_seen.min_distance
+                            WHEN aircraft_seen.min_distance IS NULL THEN excluded.min_distance
+                            ELSE MIN(aircraft_seen.min_distance, excluded.min_distance)
+                        END
+                    """,
+                    (
+                        day,
+                        scope,
+                        str(target.hex).lower(),
+                        ts,
+                        ts,
+                        target.callsign,
+                        target.type,
+                        target_alt,
+                        round(distance, 2),
+                    ),
+                )
+            unique_default = conn.execute(
+                """
+                SELECT COUNT(*) FROM aircraft_seen
+                WHERE day = ? AND scope = ? AND min_distance <= ?
+                """,
+                (day, scope, default_range),
+            ).fetchone()[0]
+            conn.commit()
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Écriture des statistiques impossible: %s", exc)
+        return None
+
+    _last_stats_recorded_ts = ts
+    cleanup_stats_db()
+    default_counts = counts.get(str(default_range), {})
+    return {
+        "ts": ts,
+        "day": day,
+        "scope": scope,
+        "counts": counts,
+        "default_range_nm": default_range,
+        "unique_default": int(unique_default),
+        "source": snapshot.source,
+        "center_lat": LAT,
+        "center_lon": LON,
+        "max_range_nm": float(MAX_RADIUS_NM),
+        **default_counts,
+    }
+
+def stats_summary(
+    day: str,
+    days: int,
+    minutes: int,
+    requested_range: int | None = None,
+) -> dict[str, Any]:
+    scope = _stats_scope()
+    range_nm = _effective_stats_range(requested_range)
+    available_ranges = _stats_ranges()
+    now = int(time.time())
+    recent_start = (now // 60 - (minutes - 1)) * 60
+    today = datetime.now(UTC).date()
+    first_daily_day = today - timedelta(days=days - 1)
+    daily_start = first_daily_day.strftime("%Y-%m-%d")
+    daily_days = [
+        (first_daily_day + timedelta(days=offset)).strftime("%Y-%m-%d")
+        for offset in range(days)
+    ]
+    range_key = str(range_nm)
+
+    with closing(_stats_connect()) as conn:
+        day_rows = conn.execute(
+            """
+            SELECT ts, counts_json, source
+            FROM snapshots
+            WHERE day = ? AND scope = ?
+            ORDER BY ts
+            """,
+            (day, scope),
+        ).fetchall()
+        unique = conn.execute(
+            """
+            SELECT COUNT(*) FROM aircraft_seen
+            WHERE day = ? AND scope = ? AND min_distance <= ?
+            """,
+            (day, scope, range_nm),
+        ).fetchone()[0]
+        recent_rows = conn.execute(
+            """
+            SELECT ts, counts_json
+            FROM snapshots
+            WHERE scope = ? AND ts >= ?
+            ORDER BY ts
+            """,
+            (scope, recent_start),
+        ).fetchall()
+        daily_rows = conn.execute(
+            """
+            SELECT day, ts, counts_json
+            FROM snapshots
+            WHERE scope = ? AND day >= ?
+            ORDER BY day, ts
+            """,
+            (scope, daily_start),
+        ).fetchall()
+        daily_unique_rows = conn.execute(
+            """
+            SELECT day, COUNT(*) AS unique_count
+            FROM aircraft_seen
+            WHERE scope = ? AND day >= ? AND min_distance <= ?
+            GROUP BY day
+            """,
+            (scope, daily_start, range_nm),
+        ).fetchall()
+
+    day_entries: list[tuple[int, int, dict[str, Any], str | None]] = []
+    hourly: dict[int, dict[str, Any]] = {}
+    for row in day_rows:
+        try:
+            counts = json.loads(row["counts_json"])
+        except (TypeError, ValueError):
+            continue
+        entry = counts.get(range_key) if isinstance(counts, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        ts = int(row["ts"])
+        aircraft = int(entry.get("aircraft") or 0)
+        day_entries.append((ts, aircraft, entry, row["source"]))
+        hour = datetime.fromtimestamp(ts, UTC).hour
+        bucket = hourly.setdefault(
+            hour, {"hour": hour, "samples": 0, "sum": 0, "peak": 0}
+        )
+        bucket["samples"] += 1
+        bucket["sum"] += aircraft
+        bucket["peak"] = max(bucket["peak"], aircraft)
+
+    samples = len(day_entries)
+    observations = sum(entry[1] for entry in day_entries)
+    peak = max((entry[1] for entry in day_entries), default=0)
+    first_ts = day_entries[0][0] if day_entries else None
+    last_ts = day_entries[-1][0] if day_entries else None
+    last = None
+    if day_entries:
+        last_ts_value, _aircraft, last_counts, source = day_entries[-1]
+        last = {
+            "ts": last_ts_value,
+            **last_counts,
+            "source": source,
+        }
+
+    hours = []
+    for hour in range(24):
+        bucket = hourly.get(hour)
+        if bucket:
+            hours.append(
+                {
+                    "hour": hour,
+                    "samples": bucket["samples"],
+                    "average": round(bucket["sum"] / bucket["samples"], 2),
+                    "peak": bucket["peak"],
+                }
+            )
+        else:
+            hours.append({"hour": hour, "samples": 0, "average": 0.0, "peak": 0})
+
+    recent_buckets: dict[int, dict[str, Any]] = {}
+    for row in recent_rows:
+        try:
+            counts = json.loads(row["counts_json"])
+        except (TypeError, ValueError):
+            continue
+        entry = counts.get(range_key) if isinstance(counts, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        minute = (int(row["ts"]) // 60) * 60
+        if minute < recent_start:
+            continue
+        aircraft = int(entry.get("aircraft") or 0)
+        bucket = recent_buckets.setdefault(
+            minute, {"ts": minute, "samples": 0, "sum": 0, "peak": 0}
+        )
+        bucket["samples"] += 1
+        bucket["sum"] += aircraft
+        bucket["peak"] = max(bucket["peak"], aircraft)
+    recent = [
+        {
+            "ts": bucket["ts"],
+            "samples": bucket["samples"],
+            "average": round(bucket["sum"] / bucket["samples"], 2),
+            "peak": bucket["peak"],
+        }
+        for bucket in sorted(recent_buckets.values(), key=lambda item: item["ts"])
+    ]
+
+    daily_snapshot: dict[str, dict[str, Any]] = {}
+    for row in daily_rows:
+        try:
+            counts = json.loads(row["counts_json"])
+        except (TypeError, ValueError):
+            continue
+        entry = counts.get(range_key) if isinstance(counts, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        daily_day = row["day"]
+        aircraft = int(entry.get("aircraft") or 0)
+        bucket = daily_snapshot.setdefault(
+            daily_day, {"samples": 0, "observations": 0, "peak": 0}
+        )
+        bucket["samples"] += 1
+        bucket["observations"] += aircraft
+        bucket["peak"] = max(bucket["peak"], aircraft)
+    unique_by_day = {row["day"]: int(row["unique_count"]) for row in daily_unique_rows}
+    daily = []
+    for daily_day in daily_days:
+        bucket = daily_snapshot.get(daily_day)
+        samples_day = bucket["samples"] if bucket else 0
+        observations_day = bucket["observations"] if bucket else 0
+        daily.append(
+            {
+                "day": daily_day,
+                "samples": samples_day,
+                "observations": observations_day,
+                "peak": bucket["peak"] if bucket else 0,
+                "average": (
+                    round(observations_day / samples_day, 2) if samples_day else 0.0
+                ),
+                "unique": unique_by_day.get(daily_day, 0),
+            }
+        )
+
+    return {
+        "enabled": True,
+        "day": day,
+        "timezone": "UTC",
+        "scope": scope,
+        "range_nm": range_nm,
+        "available_ranges": available_ranges,
+        "samples": samples,
+        "observations": observations,
+        "peak": peak,
+        "average": round(observations / samples, 2) if samples else 0.0,
+        "unique": int(unique),
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+        "last": last,
+        "hours": hours,
+        "recent": recent,
+        "daily": daily,
+        "sample_seconds": STATS_SAMPLE_SECONDS,
+        "retention_days": STATS_RETENTION_DAYS,
+    }
+
+def reset_stats_db() -> int:
+    global _last_stats_recorded_ts
+    if not _stats_db_ok:
+        return 0
+    with closing(_stats_connect()) as conn:
+        deleted = conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+        conn.execute("DELETE FROM snapshots")
+        conn.execute("DELETE FROM aircraft_seen")
+        conn.commit()
+    _last_stats_recorded_ts = 0
+    return int(deleted)
+
+
+def _line_escape(value: Any) -> str:
+    text = str(value)
+    return (
+        text.replace("\\", "\\\\")
+        .replace(" ", "\\ ")
+        .replace(",", "\\,")
+        .replace("=", "\\=")
+    )
+
+
+def _influx_ready() -> bool:
+    if not INFLUX_ENABLED:
+        return False
+    parsed = urlparse(INFLUX_URL)
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc
+        and INFLUX_ORG
+        and INFLUX_BUCKET
+        and INFLUX_TOKEN
+        and re.fullmatch(r"[A-Za-z0-9_.-]+", INFLUX_MEASUREMENT)
+    )
+
+
+def _influx_write_url() -> str:
+    base = INFLUX_URL.rstrip("/")
+    query = (
+        f"org={quote(INFLUX_ORG, safe='')}"
+        f"&bucket={quote(INFLUX_BUCKET, safe='')}"
+        "&precision=ns"
+    )
+    if base.endswith("/api/v2/write"):
+        return f"{base}?{query}"
+    return f"{base}/api/v2/write?{query}"
+
+
+def _influx_line(record: dict[str, Any]) -> str:
+    location = AIRPORT_ICAO if LOCATION_MODE == "airport" and AIRPORT_ICAO else "GPS"
+    default_range = int(record.get("default_range_nm") or _effective_stats_range())
+    counts = record.get("counts")
+    entry = (
+        counts.get(str(default_range))
+        if isinstance(counts, dict)
+        else None
+    )
+    if not isinstance(entry, dict):
+        entry = record
+    tags = [
+        f"source={_line_escape(record.get('source') or 'unknown')}",
+        f"location={_line_escape(location)}",
+        f"range_nm={default_range}",
+    ]
+    fields = [
+        f"aircraft={int(entry.get('aircraft') or 0)}i",
+        f"airborne={int(entry.get('airborne') or 0)}i",
+        f"ground={int(entry.get('ground') or 0)}i",
+        f"emergency={int(entry.get('emergency') or 0)}i",
+        f"unique_today={int(record.get('unique_default') or 0)}i",
+    ]
+    if entry.get("max_alt") is not None:
+        fields.append(f"max_alt_ft={int(entry['max_alt'])}i")
+    if entry.get("average_alt") is not None:
+        fields.append(f"average_alt_ft={float(entry['average_alt']):.1f}")
+    if entry.get("max_distance") is not None:
+        fields.append(f"max_distance_nm={float(entry['max_distance']):.2f}")
+    timestamp_ns = int(record.get("ts") or time.time()) * 1_000_000_000
+    return (
+        f"{INFLUX_MEASUREMENT},{','.join(tags)} "
+        f"{','.join(fields)} {timestamp_ns}"
+    )
+
+
+async def _influx_post(
+    client: httpx.AsyncClient, line: str
+) -> tuple[bool, int | None, str]:
+    if not _influx_ready():
+        return False, None, "InfluxDB désactivé ou incomplet."
+    try:
+        response = await client.post(
+            _influx_write_url(),
+            headers={
+                "Authorization": f"Token {INFLUX_TOKEN}",
+                "Content-Type": "text/plain; charset=utf-8",
+            },
+            content=f"{line}\n",
+            timeout=5.0,
+        )
+    except httpx.HTTPError as exc:
+        return False, None, f"InfluxDB injoignable ({exc.__class__.__name__})."
+    if 200 <= response.status_code < 300:
+        return True, response.status_code, "ok"
+    detail = response.text.strip().replace("\n", " ")[:300]
+    return False, response.status_code, detail or "écriture refusée"
+
+
+async def export_influx_record(
+    client: httpx.AsyncClient, record: dict[str, Any]
+) -> bool:
+    global _influx_last_error_at
+    if not _influx_ready():
+        return False
+    ok, status, detail = await _influx_post(client, _influx_line(record))
+    if not ok:
+        now = time.monotonic()
+        if now - _influx_last_error_at > 60:
+            logger.warning(
+                "Export InfluxDB échoué (HTTP %s): %s",
+                status if status is not None else "-",
+                detail,
+            )
+            _influx_last_error_at = now
+    return ok
+
+
+async def test_influx_connection(client: httpx.AsyncClient) -> dict[str, Any]:
+    if not INFLUX_ENABLED:
+        return {"ok": False, "detail": "Export InfluxDB désactivé."}
+    if not _influx_ready():
+        return {
+            "ok": False,
+            "detail": "Configuration InfluxDB incomplète (URL, org, bucket, token, mesure).",
+        }
+    line = (
+        f"{INFLUX_MEASUREMENT},test=true,source=radardesk "
+        f"test=1i {time.time_ns()}"
+    )
+    ok, status, detail = await _influx_post(client, line)
+    return {"ok": ok, "status": status, "detail": detail}
+
+
+async def stats_collector_loop(app: FastAPI) -> None:
+    last_influx = 0.0
+    while True:
+        try:
+            snapshot, stale, _age = await get_snapshot(app.state.http)
+            if not stale:
+                record = await asyncio.to_thread(record_stats_snapshot, snapshot)
+                if record and INFLUX_ENABLED:
+                    now = time.monotonic()
+                    if now - last_influx >= INFLUX_INTERVAL_S:
+                        if await export_influx_record(app.state.http, record):
+                            last_influx = now
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - dépend du réseau
+            logger.warning("Collecteur de statistiques: %s", exc)
+        await asyncio.sleep(STATS_SAMPLE_SECONDS)
+
+
+# ============================================================================
 # RÉPONSES HTTP
 # ============================================================================
 
@@ -784,9 +1553,22 @@ async def lifespan(app: FastAPI):
         PRIMARY.label,
         f" (secours: {FALLBACK.label})" if FALLBACK else "",
     )
+    stats_task: asyncio.Task[None] | None = None
     try:
+        stats_ok = await asyncio.to_thread(init_stats_db)
+        if stats_ok:
+            stats_task = asyncio.create_task(stats_collector_loop(app))
+            logger.info(
+                "Collecteur de statistiques actif (échantillon %ds, rétention %dj).",
+                STATS_SAMPLE_SECONDS,
+                STATS_RETENTION_DAYS,
+            )
         yield
     finally:
+        if stats_task is not None:
+            stats_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stats_task
         await app.state.http.aclose()
 
 
@@ -848,6 +1630,55 @@ else:
 async def api_config() -> dict[str, Any]:
     """Configuration publique consommée par le frontend."""
     return config_payload()
+
+
+@app.get("/api/stats/summary", tags=["stats"])
+async def api_stats_summary(
+    day: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    days: int = Query(default=7, ge=1, le=90),
+    minutes: int = Query(default=60, ge=10, le=1440),
+    range_nm: int | None = Query(default=None, ge=1, le=250),
+) -> dict[str, Any]:
+    """Résumé des statistiques persistantes pour le jour et la portée actifs."""
+    requested_day = day or datetime.now(UTC).strftime("%Y-%m-%d")
+    requested_range = _effective_stats_range(range_nm)
+    try:
+        datetime.strptime(requested_day, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Date invalide.") from exc
+    if not stats_available():
+        return {
+            "enabled": False,
+            "day": requested_day,
+            "timezone": "UTC",
+            "scope": _stats_scope(),
+            "range_nm": requested_range,
+            "available_ranges": _stats_ranges(),
+            "samples": 0,
+            "observations": 0,
+            "peak": 0,
+            "average": 0.0,
+            "unique": 0,
+            "first_ts": None,
+            "last_ts": None,
+            "last": None,
+            "hours": [],
+            "recent": [],
+            "daily": [],
+            "sample_seconds": STATS_SAMPLE_SECONDS,
+            "retention_days": STATS_RETENTION_DAYS,
+            "reason": _stats_db_error if STATS_ENABLED else "disabled",
+        }
+    try:
+        return await asyncio.to_thread(
+            stats_summary, requested_day, days, minutes, requested_range
+        )
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Lecture des statistiques impossible: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Base de statistiques temporairement indisponible.",
+        ) from exc
 
 
 @app.get(
@@ -921,6 +1752,8 @@ async def api_health() -> dict[str, Any]:
             "last_success": None,
             "last_error": _last_upstream_error,
             "config_source": "runtime" if _runtime_config_active else "environment",
+            "stats_enabled": stats_available(),
+            "stats_error": _stats_db_error,
         }
 
     age = time.monotonic() - snapshot.fetched_monotonic
@@ -934,6 +1767,8 @@ async def api_health() -> dict[str, Any]:
         "last_error": _last_upstream_error,
         "config_source": "runtime" if _runtime_config_active else "environment",
         "max_radius_nm": MAX_RADIUS_NM,
+        "stats_enabled": stats_available(),
+        "stats_error": _stats_db_error,
     }
 
 
@@ -1371,6 +2206,36 @@ async def api_weather_radar(request: Request) -> dict[str, Any]:
                 status_code=502,
                 detail=f"Radar météo indisponible: {exc.__class__.__name__}.",
             ) from exc
+
+
+def _require_internal_token(request: Request) -> None:
+    if not INTERNAL_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="ADSB_INTERNAL_TOKEN n'est pas configuré.",
+        )
+    provided = request.headers.get("X-Internal-Token", "")
+    if not secrets.compare_digest(provided, INTERNAL_TOKEN):
+        raise HTTPException(status_code=401, detail="Jeton interne invalide.")
+
+
+@app.post("/internal/stats/reset", include_in_schema=False)
+async def internal_stats_reset(request: Request) -> dict[str, Any]:
+    _require_internal_token(request)
+    if not stats_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Statistiques persistantes désactivées ou indisponibles.",
+        )
+    deleted = await asyncio.to_thread(reset_stats_db)
+    logger.info("Statistiques réinitialisées (%d relevé(s) supprimé(s)).", deleted)
+    return {"status": "reset", "deleted": deleted}
+
+
+@app.post("/internal/influx/test", include_in_schema=False)
+async def internal_influx_test(request: Request) -> dict[str, Any]:
+    _require_internal_token(request)
+    return await test_influx_connection(request.app.state.http)
 
 
 @app.post("/internal/reload", include_in_schema=False)

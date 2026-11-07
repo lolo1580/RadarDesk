@@ -134,9 +134,7 @@
               <dt>Surface</dt><dd id="antennaArea">—</dd>
               <dt>Source</dt><dd id="antennaSource">—</dd>
             </dl>
-            <p class="stats-note">Compteurs liés au centre et à la portée.</p>
-            <button class="stats-reset" id="resetStatsBtn" type="button"
-                    title="Réinitialise le comptage pour ce centre et cette portée">RÉINITIALISER</button>
+            <p class="stats-note" id="statsNote">Compteurs serveur liés au centre et à la portée affichée.</p>
           </div>
 
           <div class="stat-panel">
@@ -165,6 +163,10 @@
             <div class="bar-list" id="typeBars"></div>
           </div>
 
+          <div class="stat-panel">
+            <header><span>7 DERNIERS JOURS</span><span>UNIQUES</span></header>
+            <div class="bar-list" id="dailyBars"></div>
+          </div>
         </section>
 
         <div class="fleet-view" id="fleetView" role="tabpanel" aria-labelledby="fleetTab" hidden>

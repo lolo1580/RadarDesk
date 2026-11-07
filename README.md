@@ -32,6 +32,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Interface desktop standard sur `8083` : carte Leaflet, sans balayage ni
   effets CRT, avec statistiques de réception, table de flotte, filtres, tri,
   export CSV et fiches cibles.
+- Statistiques de réception persistantes en SQLite, échantillonnées en continu
+  par le backend, avec export InfluxDB v2 configurable dans l'administration.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource JavaScript/CSS frontend externe : Leaflet est embarqué
   localement, compatible Morph Browser / QtWebEngine.
@@ -80,6 +82,12 @@ L'interface desktop est une application statique autonome servie par son propre
 Nginx. Elle embarque Leaflet localement, utilise un fond de carte sombre Esri
 sans clé API et relaie `/api/` vers le backend ainsi que `/data/` vers le
 frontend mobile pour partager les mêmes données aéroports/pistes.
+
+Le backend écrit également un historique de réception dans une base SQLite
+locale montée sur le volume Docker `radardesk_stats_data`. Le collecteur
+échantillonne l'antenne en continu, même sans navigateur ouvert, et peut
+exporter les mêmes métriques vers InfluxDB v2. Le token InfluxDB reste dans le
+volume d'administration et n'est jamais renvoyé au frontend.
 
 ## Arborescence
 
@@ -249,6 +257,17 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather`, `metar_taf` ou `checkwx` |
 | `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
 | `CHECKWX_API_KEY` | — | Clé API CheckWX |
+| `ADSB_STATS_ENABLED` | `true` | Collecte SQLite des statistiques |
+| `ADSB_STATS_DB_PATH` | `/stats/adsb-stats.db` | Base SQLite dans le volume `stats_data` |
+| `ADSB_STATS_SAMPLE_SECONDS` | `30` | Intervalle d'échantillonnage du collecteur (s) |
+| `ADSB_STATS_RETENTION_DAYS` | `180` | Conservation de l'historique (jours) |
+| `ADSB_INFLUX_ENABLED` | `false` | Active l'export InfluxDB v2 |
+| `ADSB_INFLUX_URL` | — | URL de base InfluxDB, ex. `http://influxdb:8086` |
+| `ADSB_INFLUX_ORG` | — | Organisation InfluxDB |
+| `ADSB_INFLUX_BUCKET` | — | Bucket InfluxDB |
+| `ADSB_INFLUX_TOKEN` | — | Token API InfluxDB |
+| `ADSB_INFLUX_MEASUREMENT` | `adsb_stats` | Nom de la mesure InfluxDB |
+| `ADSB_INFLUX_INTERVAL_S` | `30` | Intervalle minimal entre deux exports (s) |
 | `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
 
 Appliquer une modification :
@@ -353,6 +372,39 @@ aéroports demandés.
 Métadonnées des dernières frames RainViewer (host, frames, horodatage), avec
 cache court côté backend.
 
+### `GET /api/stats/summary?range_nm=50&days=7&minutes=60`
+
+Résumé des statistiques SQLite pour le jour UTC courant et le centre d'antenne
+actif. `range_nm` sélectionne la portée du comptage ; `days` contrôle
+l'historique journalier (1–90 jours) et `minutes` la fenêtre du graphique.
+
+La réponse contient notamment :
+
+- `samples`, `observations`, `peak`, `average`, `unique` ;
+- `recent` : agrégats par minute sur la fenêtre demandée ;
+- `hours` : 24 agrégats horaires ;
+- `daily` : uniques et pics des derniers jours ;
+- `last` : dernier échantillon connu.
+
+Les comptages sont séparés par centre d'antenne et par portée. Un aéronef
+compte comme unique pour une portée s'il a été vu au moins une fois dans cette
+portée pendant la journée.
+
+### `POST /internal/stats/reset`
+
+Endpoint interne, protégé par `X-Internal-Token`. Efface tout l'historique
+SQLite. Appelé par le bouton `EFFACER L'HISTORIQUE` de l'administration.
+
+### `POST /internal/influx/test`
+
+Endpoint interne, protégé par `X-Internal-Token`. Envoie un point de test vers
+InfluxDB avec la configuration active.
+
+L'export InfluxDB réutilise les échantillons du collecteur SQLite : laisser
+`ADSB_STATS_ENABLED=true` pour que l'export fonctionne. Chaque point contient
+les comptages de la portée par défaut configurée, avec les tags `source`,
+`location` et `range_nm`.
+
 ### `POST /internal/reload`
 
 Endpoint interne non exposé par Nginx. Il recharge le fichier
@@ -371,11 +423,12 @@ radar, rémanence phosphore ni effets CRT :
 - compteurs du jour : avions uniques, pic simultané, contacts cumulés,
   nombre de relevés et moyenne par relevé ;
 - graphique d'activité sur les 60 dernières minutes ;
+- historique des 7 derniers jours en avions uniques ;
 - répartition des contacts par distance, par altitude et par type d'appareil ;
 - panneau antenne : centre, portée courante, portée max, surface couverte et
   source de données ;
-- statistiques persistées localement pour la journée en cours, liées au centre
-  et à la portée, avec remise à zéro manuelle ;
+- statistiques persistées côté serveur en SQLite, séparées par centre d'antenne
+  et par portée ;
 - vue `FLOTTE` avec table complète des cibles dans la bulle ;
 - recherche par indicatif, type, hex ou squawk ;
 - filtres en vol / au sol / urgences ;
@@ -391,10 +444,10 @@ radar, rémanence phosphore ni effets CRT :
 - Leaflet 1.9.4 embarqué localement, sans CDN JavaScript/CSS.
 
 Les compteurs sont calculés à partir du flux ADS-B actif, dans la zone
-centre/portée configurée. Ils se réinitialisent automatiquement lorsque le
-centre ou la portée change, et sont conservés dans le stockage local du
-navigateur pour la journée en cours. Le panneau `ANTENNE RX` rappelle le centre,
-la portée et la source réellement utilisés.
+centre/portée affichée. Le collecteur backend échantillonne l'antenne même
+lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
+du volume Docker `radardesk_stats_data`. Le panneau `ANTENNE RX` rappelle le
+centre, la portée et la source réellement utilisés.
 
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
@@ -412,7 +465,11 @@ Le service `admin` est séparé du backend radar :
 - le panneau du radar affiche par défaut l'aéroport le plus proche des
   coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
 - persistance dans le volume Docker `radardesk_admin_data` ;
-- bouton **Recharger** et **Réinitialiser** vers les variables d'environnement.
+- configuration InfluxDB v2 : URL, organisation, bucket, token, mesure et
+  intervalle d'export, avec bouton de test d'écriture. L'export utilise la
+  portée par défaut configurée pour l'antenne ;
+- bouton **EFFACER L'HISTORIQUE** pour vider la base SQLite des statistiques ;
+- boutons **Recharger** et **Réinitialiser** vers les variables d'environnement.
 
 Les modifications sont appliquées sans redémarrage du backend. En cas de
 redémarrage du backend, la configuration runtime est relue depuis le volume.

@@ -168,6 +168,59 @@
           </p>
         </fieldset>
 
+        <fieldset>
+          <legend>STATISTIQUES &amp; INFLUXDB</legend>
+          <label class="field-check field-wide">
+            <input id="influx_enabled" name="influx_enabled" type="checkbox">
+            <span>Exporter les statistiques vers InfluxDB v2</span>
+          </label>
+          <label>
+            <span>URL InfluxDB</span>
+            <input id="influx_url" name="influx_url" type="url"
+                   placeholder="http://influxdb:8086" autocomplete="off">
+          </label>
+          <label>
+            <span>Organisation</span>
+            <input id="influx_org" name="influx_org" type="text"
+                   placeholder="radardesk" autocomplete="off">
+          </label>
+          <label>
+            <span>Bucket</span>
+            <input id="influx_bucket" name="influx_bucket" type="text"
+                   placeholder="adsb" autocomplete="off">
+          </label>
+          <label>
+            <span>Token API</span>
+            <input id="influx_token" name="influx_token" type="password"
+                   placeholder="Laisser vide pour conserver le token actuel"
+                   autocomplete="new-password">
+          </label>
+          <label>
+            <span>Mesure</span>
+            <input id="influx_measurement" name="influx_measurement" type="text"
+                   value="adsb_stats" autocomplete="off">
+          </label>
+          <label>
+            <span>Intervalle d'export (s)</span>
+            <input id="influx_interval_s" name="influx_interval_s" type="number"
+                   step="1" min="5" max="3600" value="30">
+          </label>
+          <p class="field-note field-wide" id="influxHint">
+            InfluxDB v2 uniquement. Le token n'est jamais renvoyé à l'interface ;
+            laisser vide conserve le token déjà enregistré. Le test utilise la
+            configuration active : appliquer avant de tester.
+          </p>
+          <p class="field-note field-wide" id="statsHint">
+            Statistiques SQLite locales.
+          </p>
+          <div class="field-wide stats-actions">
+            <button class="button" id="testInfluxBtn" type="button">TESTER INFLUXDB</button>
+            <button class="button button--danger" id="resetStatsBtn" type="button">
+              EFFACER L'HISTORIQUE
+            </button>
+          </div>
+        </fieldset>
+
         <p class="hint">
           Les modifications sont validées puis appliquées à chaud au backend radar.
           Elles restent persistées dans le volume Docker après redémarrage.
