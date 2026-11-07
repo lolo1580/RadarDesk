@@ -15,6 +15,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Aéroports majeurs et moyens en cyan, avec codes IATA/OACI, filtrés selon la portée.
+- Tracé des pistes réelles (seuils, orientation, largeur) autour des aéroports,
+  visible dès 5 NM.
 - Météo aviation : badges METAR VFR/MVFR/IFR/LIFR et fiche détaillée au clic.
 - Couche de précipitations animée RainViewer, filtrée selon la portée.
 - Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
@@ -104,6 +106,7 @@ RadarDesk/
         ├── manifest.webmanifest
         └── data/
             ├── airports.json
+            ├── runways.json
             └── README.txt
 ```
 

@@ -10,7 +10,7 @@
   const SWEEP_PERIOD_MS = 4000;
   const FETCH_TIMEOUT_MS = 10000;
   const ECHO_HISTORY_LENGTH = 3;
-  const RANGE_STEPS = [10, 25, 50, 75, 100, 125, 150, 200, 250];
+  const RANGE_STEPS = [5, 10, 25, 50, 75, 100, 125, 150, 200, 250];
   const RANGE_STORAGE_KEY = "radardesk.rangeNm";
   const PANEL_MODE_KEY = "radardesk.panel";
   const WEATHER_REFRESH_MS = 5 * 60 * 1000;
@@ -155,6 +155,7 @@
     rawAircraft: [],
     airports: [],
     visibleAirports: [],
+    runways: new Map(),
     airportWeather: new Map(),
     nearestAirport: null,
     panelMode: "airport",
@@ -1410,6 +1411,77 @@
       const metar = state.airportWeather.get(airport.icao);
       const categoryColor = metar ? weatherColor(metar.flight_category) : null;
 
+      // Pistes : lignes géoréférencées par leurs deux seuils réels.
+      const airportRunways = state.runways.get(airport.icao) || [];
+      for (const runway of airportRunways) {
+        if (!Array.isArray(runway) || runway.length < 6) {
+          continue;
+        }
+        const [leLat, leLon, heLat, heLon, lengthFt, widthFt] = runway;
+        const leDistance = distanceNm(
+          state.config.lat,
+          state.config.lon,
+          Number(leLat),
+          Number(leLon),
+        );
+        const heDistance = distanceNm(
+          state.config.lat,
+          state.config.lon,
+          Number(heLat),
+          Number(heLon),
+        );
+        if (leDistance > rangeNm && heDistance > rangeNm) {
+          continue;
+        }
+        const leBearing = bearingDeg(
+          state.config.lat,
+          state.config.lon,
+          Number(leLat),
+          Number(leLon),
+        );
+        const heBearing = bearingDeg(
+          state.config.lat,
+          state.config.lon,
+          Number(heLat),
+          Number(heLon),
+        );
+        const leRadius = clamp(leDistance / rangeNm, 0, 1) * R;
+        const heRadius = clamp(heDistance / rangeNm, 0, 1) * R;
+        const x1 = cx + Math.sin(leBearing * DEG) * leRadius;
+        const y1 = cy - Math.cos(leBearing * DEG) * leRadius;
+        const x2 = cx + Math.sin(heBearing * DEG) * heRadius;
+        const y2 = cy - Math.cos(heBearing * DEG) * heRadius;
+        const runwayWidth = clamp(
+          ((Number(widthFt) || 100) / 6076.12 / rangeNm) * R,
+          1.5,
+          4,
+        );
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "rgba(4, 12, 18, 0.9)";
+        ctx.lineWidth = runwayWidth + 1.6;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(135, 235, 248, 0.72)";
+        ctx.lineWidth = runwayWidth;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        if (rangeNm <= 10 && runway[6] && runway[7]) {
+          const midX = (x1 + x2) / 2;
+          const midY = (y1 + y2) / 2;
+          ctx.globalAlpha = 0.58;
+          ctx.fillStyle = "rgba(155, 245, 255, 0.85)";
+          ctx.font = `600 ${Math.max(6.5, view.detailFont - 1.4)}px ${FONT_STACK}`;
+          ctx.textAlign = "left";
+          ctx.fillText(`${runway[6]}/${runway[7]}`, midX + 4, midY - 5);
+          ctx.globalAlpha = 1;
+        }
+      }
+
       ctx.strokeStyle = `rgba(86, 224, 240, ${alpha})`;
       ctx.lineWidth = 0.8;
       ctx.strokeRect(x - size, y - size, size * 2, size * 2);
@@ -2400,6 +2472,25 @@
     }
   }
 
+  async function loadRunways() {
+    try {
+      const response = await fetch("/static/data/runways.json", {
+        cache: "force-cache",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return;
+      }
+      state.runways = new Map(Object.entries(payload));
+    } catch {
+      state.runways = new Map();
+    }
+  }
+
   async function loadConfig() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 4000);
@@ -2553,6 +2644,7 @@
   setStreamState("connecting", "ACQUISITION");
   startFrameLoop();
   loadAirports();
+  loadRunways();
   loadWeatherRadar();
   loadConfig().finally(poll);
   window.setInterval(() => {
