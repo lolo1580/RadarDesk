@@ -333,7 +333,9 @@ Le service `admin` est séparé du backend radar :
 - HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
 - état du radar : source, cache, nombre de cibles, configuration active ;
 - modification à chaud de la position (coordonnées GPS ou code OACI), des
-  portées, du cache, de la cadence, des sources ADS-B et de la source METAR ;
+  portées, du cache, de la cadence, des sources ADS-B et de la source METAR.
+  En mode OACI, le HUD radar affiche le code de l'aéroport (`· LSGG`) et
+  l'aéroport le plus proche passe à `0.0 NM` ;
 - le panneau du radar affiche par défaut l'aéroport le plus proche des
   coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
 - persistance dans le volume Docker `radardesk_admin_data` ;

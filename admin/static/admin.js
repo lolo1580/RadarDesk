@@ -102,6 +102,28 @@
     return airportsByIcao.get(code) || null;
   }
 
+  function updateLocationHint() {
+    const hint = document.getElementById("locationHint");
+    const mode = dom.form.elements.namedItem("location_mode").value;
+    const airportSearch = dom.form.elements.namedItem("airport_search");
+    const lat = dom.form.elements.namedItem("lat");
+    const lon = dom.form.elements.namedItem("lon");
+    if (!hint) {
+      return;
+    }
+
+    if (mode === "airport") {
+      const airport = findAirport(airportSearch.value);
+      if (airport) {
+        hint.textContent = `Centre actif : ${airportLabel(airport)} (${airport[4]}, ${airport[5]}).`;
+      } else {
+        hint.textContent = "Sélectionner un aéroport dans la liste pour définir le centre.";
+      }
+    } else {
+      hint.textContent = `Centre actif : coordonnées GPS ${lat.value}, ${lon.value}.`;
+    }
+  }
+
   function syncLocationMode() {
     const mode = dom.form.elements.namedItem("location_mode").value;
     const airportMode = mode === "airport";
@@ -109,7 +131,6 @@
     const airportSearch = dom.form.elements.namedItem("airport_search");
     const lat = dom.form.elements.namedItem("lat");
     const lon = dom.form.elements.namedItem("lon");
-    const hint = document.getElementById("locationHint");
 
     if (airportField) {
       airportField.hidden = !airportMode;
@@ -123,11 +144,7 @@
     if (lon) {
       lon.readOnly = airportMode;
     }
-    if (hint) {
-      hint.textContent = airportMode
-        ? "La sélection d'un aéroport remplace les coordonnées manuelles."
-        : "Le mode coordonnées GPS utilise directement la latitude et la longitude.";
-    }
+    updateLocationHint();
   }
 
   async function loadAdminAirports() {
@@ -486,9 +503,13 @@
     airportSearchField.value = airportLabel(airport);
     dom.form.elements.namedItem("lat").value = String(airport[4]);
     dom.form.elements.namedItem("lon").value = String(airport[5]);
+    updateLocationHint();
   };
   airportSearchField.addEventListener("input", selectAirportFromInput);
   airportSearchField.addEventListener("change", selectAirportFromInput);
+  for (const name of ["lat", "lon"]) {
+    dom.form.elements.namedItem(name).addEventListener("input", updateLocationHint);
+  }
 
   loadAdminAirports().finally(() => loadStatus(true));
   scheduleStatusPoll();

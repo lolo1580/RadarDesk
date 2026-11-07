@@ -62,6 +62,8 @@
     maxDistNm: 150,
     refreshMs: 3000,
     radarStyle: "phosphor",
+    locationMode: "coords",
+    airportIcao: null,
   });
 
   const EMERGENCY_SQUAWKS = {
@@ -123,6 +125,7 @@
     lastUpdate: document.getElementById("lastUpdate"),
     hudCoords: document.getElementById("hudCoords"),
     hudLink: document.getElementById("hudLink"),
+    hudLocation: document.getElementById("hudLocation"),
     wxState: document.getElementById("wxState"),
     weatherCard: document.getElementById("weatherCard"),
     weatherClose: document.getElementById("weatherClose"),
@@ -598,6 +601,12 @@
       setText(value, String(Math.round(distNm)));
     }
     setText(dom.targetScope, `DANS ${Math.round(distNm)} NM`);
+    setText(
+      dom.hudLocation,
+      state.config.locationMode === "airport" && state.config.airportIcao
+        ? ` · ${state.config.airportIcao}`
+        : "",
+    );
   }
 
   function getRangeSteps() {
@@ -725,6 +734,14 @@
     }
     if (meta.refreshMs !== null && meta.refreshMs >= 500 && meta.refreshMs !== state.config.refreshMs) {
       state.config.refreshMs = meta.refreshMs;
+    }
+    if (meta.locationMode && meta.locationMode !== state.config.locationMode) {
+      state.config.locationMode = meta.locationMode;
+      changed = true;
+    }
+    if (meta.airportIcao !== state.config.airportIcao) {
+      state.config.airportIcao = meta.airportIcao;
+      changed = true;
     }
 
     if (rangeConfigChanged) {
@@ -2252,6 +2269,8 @@
       refreshMs: numberOrNull(response.headers.get("X-Refresh-Ms")),
       maxDistNm: numberOrNull(response.headers.get("X-Max-Range-NM")),
       radarStyle: response.headers.get("X-Radar-Style"),
+      locationMode: response.headers.get("X-Location-Mode"),
+      airportIcao: (response.headers.get("X-Airport-ICAO") || "").toUpperCase() || null,
       lat: numberOrNull(response.headers.get("X-Center-Lat")),
       lon: numberOrNull(response.headers.get("X-Center-Lon")),
     };
@@ -2430,6 +2449,12 @@
       if (refreshMs !== null && refreshMs >= 500) {
         state.config.refreshMs = refreshMs;
       }
+      if (config.location_mode === "airport" || config.location_mode === "coords") {
+        state.config.locationMode = config.location_mode;
+      }
+      state.config.airportIcao = config.airport_icao
+        ? String(config.airport_icao).toUpperCase()
+        : null;
 
       updateHud();
       updateRangeButtons();
