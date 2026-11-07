@@ -1681,6 +1681,102 @@ async def api_stats_summary(
         ) from exc
 
 
+@app.get("/api/widgets/homepage", tags=["public"])
+@app.get("/api/public/summary", include_in_schema=False)
+async def api_homepage_widget(
+    response: Response,
+    range_nm: int | None = Query(default=None, ge=1, le=250),
+) -> dict[str, Any]:
+    """Métriques compactes et stables pour un widget Homepage ou un dashboard."""
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    requested_range = _effective_stats_range(range_nm)
+    snapshot = _cache
+    now_monotonic = time.monotonic()
+    now_epoch = int(time.time())
+    current_targets: list[AircraftTarget] = []
+    cache_age: float | None = None
+    status = "starting"
+    source: str | None = None
+    fallback_used = False
+    last_update: str | None = None
+
+    if snapshot is not None:
+        cache_age = max(0.0, now_monotonic - snapshot.fetched_monotonic)
+        status = "ok" if cache_age <= STALE_TTL_S else "degraded"
+        source = snapshot.source
+        fallback_used = snapshot.fallback_used
+        last_update = iso_utc(snapshot.fetched_at)
+        current_targets = [
+            target
+            for target in snapshot.aircraft
+            if haversine_nm(LAT, LON, target.lat, target.lon) <= requested_range
+        ]
+
+    airborne = sum(1 for target in current_targets if not target.on_ground)
+    ground = len(current_targets) - airborne
+    emergency = sum(
+        1 for target in current_targets if target.squawk in {"7500", "7600", "7700"}
+    )
+
+    stats: dict[str, Any] | None = None
+    if stats_available():
+        try:
+            stats = await asyncio.to_thread(
+                stats_summary,
+                datetime.now(UTC).strftime("%Y-%m-%d"),
+                1,
+                10,
+                requested_range,
+            )
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("API widget: statistiques indisponibles (%s).", exc)
+
+    if last_update is None and stats and stats.get("last_ts"):
+        last_update = iso_utc(
+            datetime.fromtimestamp(int(stats["last_ts"]), UTC)
+        )
+
+    return {
+        "version": 1,
+        "generated_at": iso_utc(utc_now()),
+        "timestamp": now_epoch,
+        "status": status,
+        "online": status == "ok",
+        "source": source,
+        "fallback_used": fallback_used,
+        "cache_age_s": round(cache_age, 1) if cache_age is not None else None,
+        "last_update": last_update,
+        "center_lat": round(LAT, 5),
+        "center_lon": round(LON, 5),
+        "range_nm": requested_range,
+        "max_range_nm": MAX_RADIUS_NM,
+        "aircraft": len(current_targets),
+        "airborne": airborne,
+        "ground": ground,
+        "emergency": emergency,
+        "stats_enabled": stats_available(),
+        "stats_day": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "unique_today": int(stats["unique"]) if stats else 0,
+        "peak_today": int(stats["peak"]) if stats else 0,
+        "contacts_today": int(stats["observations"]) if stats else 0,
+        "samples_today": int(stats["samples"]) if stats else 0,
+        "average_today": float(stats["average"]) if stats else 0.0,
+        "last_sample_at": (
+            iso_utc(datetime.fromtimestamp(int(stats["last_ts"]), UTC))
+            if stats and stats.get("last_ts")
+            else None
+        ),
+        "last_sample_aircraft": (
+            int(stats["last"]["aircraft"])
+            if stats and isinstance(stats.get("last"), dict)
+            else None
+        ),
+        "stats_sample_seconds": STATS_SAMPLE_SECONDS,
+        "stats_retention_days": STATS_RETENTION_DAYS,
+        "influx_enabled": INFLUX_ENABLED,
+    }
+
+
 @app.get(
     "/api/aircraft",
     response_model=list[AircraftTarget],

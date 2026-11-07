@@ -34,6 +34,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   export CSV et fiches cibles.
 - Statistiques de réception persistantes en SQLite, échantillonnées en continu
   par le backend, avec export InfluxDB v2 configurable dans l'administration.
+- API compacte `/api/widgets/homepage` pour intégrer les compteurs dans
+  Homepage ou un autre dashboard.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource JavaScript/CSS frontend externe : Leaflet est embarqué
   localement, compatible Morph Browser / QtWebEngine.
@@ -389,6 +391,50 @@ La réponse contient notamment :
 Les comptages sont séparés par centre d'antenne et par portée. Un aéronef
 compte comme unique pour une portée s'il a été vu au moins une fois dans cette
 portée pendant la journée.
+
+### `GET /api/widgets/homepage?range_nm=50`
+
+Endpoint public compact, prévu pour un widget **Homepage** (gethomepage.dev) ou
+tout autre dashboard. Il ne déclenche pas d'appel upstream supplémentaire : il
+utilise le cache radar et les statistiques SQLite déjà présentes.
+
+Champs principaux :
+
+- `status`, `online`, `source`, `fallback_used`, `cache_age_s` ;
+- `aircraft`, `airborne`, `ground`, `emergency` ;
+- `unique_today`, `peak_today`, `contacts_today`, `samples_today`,
+  `average_today` ;
+- `range_nm`, `center_lat`, `center_lon`, `last_update`, `generated_at`.
+
+Exemple de configuration Homepage :
+
+```yaml
+- RadarDesk:
+    icon: mdi-radar
+    href: http://<hote>:8083/
+    widget:
+      type: customapi
+      url: http://<hote>:8083/api/widgets/homepage?range_nm=50
+      refreshInterval: 10000
+      mappings:
+        - field: aircraft
+          label: Avions
+        - field: airborne
+          label: En vol
+        - field: ground
+          label: Au sol
+        - field: unique_today
+          label: Uniques jour
+        - field: peak_today
+          label: Pic
+        - field: source
+          label: Source
+        - field: last_update
+          label: MAJ
+```
+
+L'alias `GET /api/public/summary` renvoie le même JSON. Aucun token InfluxDB
+ni secret n'est exposé.
 
 ### `POST /internal/stats/reset`
 
