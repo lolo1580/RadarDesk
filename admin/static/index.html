@@ -69,6 +69,19 @@
         <fieldset>
           <legend>GÉOLOCALISATION</legend>
           <label>
+            <span>Mode de localisation</span>
+            <select id="location_mode" name="location_mode" required>
+              <option value="coords">Coordonnées GPS</option>
+              <option value="airport">Aéroport OACI</option>
+            </select>
+          </label>
+          <label class="field-wide" id="airportField" hidden>
+            <span>Aéroport (OACI, IATA ou nom)</span>
+            <input id="airport_search" name="airport_search" list="airportList"
+                   autocomplete="off" placeholder="LSGG, GVA, Geneva…">
+            <datalist id="airportList"></datalist>
+          </label>
+          <label>
             <span>Latitude</span>
             <input id="lat" name="lat" type="number" step="any" inputmode="decimal" min="-90" max="90" required>
           </label>
@@ -76,6 +89,9 @@
             <span>Longitude</span>
             <input id="lon" name="lon" type="number" step="any" inputmode="decimal" min="-180" max="180" required>
           </label>
+          <p class="field-note" id="locationHint">
+            Le mode coordonnées GPS utilise directement la latitude et la longitude.
+          </p>
         </fieldset>
 
         <fieldset>

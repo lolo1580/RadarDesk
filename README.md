@@ -89,7 +89,9 @@ RadarDesk/
 │   └── static/
 │       ├── index.html
 │       ├── style.css
-│       └── admin.js
+│       ├── admin.js
+│       └── data/
+│           └── airports.json
 └── frontend/
     ├── Dockerfile
     ├── .dockerignore
@@ -207,6 +209,8 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
+| `ADSB_LOCATION_MODE` | `coords` | Localisation : `coords` ou `airport` |
+| `ADSB_AIRPORT_ICAO` | — | Code OACI si `ADSB_LOCATION_MODE=airport` |
 | `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather`, `metar_taf` ou `checkwx` |
 | `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
 | `CHECKWX_API_KEY` | — | Clé API CheckWX |
@@ -328,8 +332,8 @@ Le service `admin` est séparé du backend radar :
 - interface web sombre et responsive sur `http://<hôte>:8082` ;
 - HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
 - état du radar : source, cache, nombre de cibles, configuration active ;
-- modification à chaud de la position, des portées, du cache, de la cadence,
-  des sources ADS-B et de la source METAR ;
+- modification à chaud de la position (coordonnées GPS ou code OACI), des
+  portées, du cache, de la cadence, des sources ADS-B et de la source METAR ;
 - le panneau du radar affiche par défaut l'aéroport le plus proche des
   coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
 - persistance dans le volume Docker `radardesk_admin_data` ;

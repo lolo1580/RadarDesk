@@ -35,6 +35,8 @@
   let formLoaded = false;
   let busy = false;
   let pollTimer = 0;
+  const airportsByIcao = new Map();
+  let selectedAirportIcao = null;
 
   function setText(node, value) {
     if (node && node.textContent !== String(value)) {
@@ -87,6 +89,77 @@
     }
   }
 
+  function airportLabel(airport) {
+    const iata = airport[1] ? `${airport[1]} — ` : "";
+    return `${airport[0]} — ${iata}${airport[2]}`;
+  }
+
+  function findAirport(value) {
+    const code = String(value || "")
+      .trim()
+      .split(/[\s—]/)[0]
+      .toUpperCase();
+    return airportsByIcao.get(code) || null;
+  }
+
+  function syncLocationMode() {
+    const mode = dom.form.elements.namedItem("location_mode").value;
+    const airportMode = mode === "airport";
+    const airportField = document.getElementById("airportField");
+    const airportSearch = dom.form.elements.namedItem("airport_search");
+    const lat = dom.form.elements.namedItem("lat");
+    const lon = dom.form.elements.namedItem("lon");
+    const hint = document.getElementById("locationHint");
+
+    if (airportField) {
+      airportField.hidden = !airportMode;
+    }
+    if (airportSearch) {
+      airportSearch.required = airportMode;
+    }
+    if (lat) {
+      lat.readOnly = airportMode;
+    }
+    if (lon) {
+      lon.readOnly = airportMode;
+    }
+    if (hint) {
+      hint.textContent = airportMode
+        ? "La sélection d'un aéroport remplace les coordonnées manuelles."
+        : "Le mode coordonnées GPS utilise directement la latitude et la longitude.";
+    }
+  }
+
+  async function loadAdminAirports() {
+    const datalist = document.getElementById("airportList");
+    try {
+      const response = await fetch("/static/data/airports.json", {
+        cache: "force-cache",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        return;
+      }
+      const rows = await response.json();
+      if (!Array.isArray(rows) || !datalist) {
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      for (const row of rows) {
+        if (!Array.isArray(row) || row.length < 6 || !row[0]) {
+          continue;
+        }
+        airportsByIcao.set(row[0], row);
+        const option = document.createElement("option");
+        option.value = airportLabel(row);
+        fragment.appendChild(option);
+      }
+      datalist.replaceChildren(fragment);
+    } catch {
+      // La recherche d'aéroport reste indisponible ; les coordonnées GPS fonctionnent.
+    }
+  }
+
   function fillConfig(config) {
     if (!config) {
       return;
@@ -98,6 +171,32 @@
         field.value = String(config[name]);
       }
     }
+
+    const locationMode = dom.form.elements.namedItem("location_mode");
+    const airportSearch = dom.form.elements.namedItem("airport_search");
+    const latField = dom.form.elements.namedItem("lat");
+    const lonField = dom.form.elements.namedItem("lon");
+    const mode = config.location_mode === "airport" ? "airport" : "coords";
+    selectedAirportIcao = config.airport_icao || null;
+    if (locationMode) {
+      locationMode.value = mode;
+    }
+    if (mode === "airport" && config.airport_icao) {
+      const airport = airportsByIcao.get(config.airport_icao);
+      if (airport) {
+        selectedAirportIcao = airport[0];
+        if (airportSearch) {
+          airportSearch.value = airportLabel(airport);
+        }
+        if (latField) latField.value = String(airport[4]);
+        if (lonField) lonField.value = String(airport[5]);
+      } else if (airportSearch) {
+        airportSearch.value = config.airport_icao;
+      }
+    } else if (airportSearch) {
+      airportSearch.value = "";
+    }
+    syncLocationMode();
 
     const primary = dom.form.elements.namedItem("primary_provider");
     const fallback = dom.form.elements.namedItem("fallback_provider");
@@ -245,6 +344,26 @@
       "weather_metar_provider",
     ).value;
     payload.radar_style = dom.form.elements.namedItem("radar_style").value;
+    const mode = dom.form.elements.namedItem("location_mode").value;
+    payload.location_mode = mode;
+    if (mode === "airport") {
+      const airportSearch = dom.form.elements.namedItem("airport_search");
+      let airport = findAirport(airportSearch.value);
+      if (!airport && selectedAirportIcao) {
+        airport = airportsByIcao.get(selectedAirportIcao) || null;
+      }
+      if (!airport) {
+        throw new Error("Sélectionner un aéroport dans la liste OACI.");
+      }
+      selectedAirportIcao = airport[0];
+      payload.airport_icao = airport[0];
+      payload.lat = Number(airport[4]);
+      payload.lon = Number(airport[5]);
+      dom.form.elements.namedItem("lat").value = String(airport[4]);
+      dom.form.elements.namedItem("lon").value = String(airport[5]);
+    } else {
+      payload.airport_icao = null;
+    }
     return payload;
   }
 
@@ -259,13 +378,24 @@
       return;
     }
 
+    let payload;
+    try {
+      payload = collectPayload();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : String(error),
+        "error",
+      );
+      return;
+    }
+
     setBusy(true);
     setMessage("Application de la configuration…");
     try {
       const result = await api("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(collectPayload()),
+        body: JSON.stringify(payload),
       });
       if (result.config) {
         fillConfig(result.config);
@@ -344,6 +474,22 @@
   dom.reloadBtn.addEventListener("click", reloadConfig);
   dom.resetBtn.addEventListener("click", resetConfig);
 
-  loadStatus(true);
+  dom.form.elements.namedItem("location_mode").addEventListener("change", syncLocationMode);
+  const airportSearchField = dom.form.elements.namedItem("airport_search");
+  const selectAirportFromInput = () => {
+    const airport = findAirport(airportSearchField.value);
+    if (!airport) {
+      selectedAirportIcao = null;
+      return;
+    }
+    selectedAirportIcao = airport[0];
+    airportSearchField.value = airportLabel(airport);
+    dom.form.elements.namedItem("lat").value = String(airport[4]);
+    dom.form.elements.namedItem("lon").value = String(airport[5]);
+  };
+  airportSearchField.addEventListener("input", selectAirportFromInput);
+  airportSearchField.addEventListener("change", selectAirportFromInput);
+
+  loadAdminAirports().finally(() => loadStatus(true));
   scheduleStatusPoll();
 })();

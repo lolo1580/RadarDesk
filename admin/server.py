@@ -81,6 +81,8 @@ class RuntimeConfigPayload(BaseModel):
     primary_cooldown_s: float = Field(ge=0, le=86_400)
     weather_metar_provider: Literal["aviationweather", "metar_taf", "checkwx"]
     radar_style: Literal["phosphor", "mono", "atc"]
+    location_mode: Literal["coords", "airport"] = "coords"
+    airport_icao: str | None = None
 
     @model_validator(mode="after")
     def validate_coherence(self) -> RuntimeConfigPayload:

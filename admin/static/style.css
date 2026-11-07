@@ -290,6 +290,20 @@ select {
   cursor: pointer;
 }
 
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field-wide[hidden] {
+  display: none;
+}
+
+input[readonly] {
+  color: var(--muted);
+  border-color: var(--green-faint);
+  background: rgba(0, 0, 0, 0.22);
+}
+
 .field-note {
   grid-column: 1 / -1;
   margin: 0;

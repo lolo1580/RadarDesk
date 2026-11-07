@@ -69,6 +69,13 @@ CHECKWX_API_KEY = os.getenv("CHECKWX_API_KEY", "").strip()
 METAR_PROVIDERS = {"aviationweather", "metar_taf", "checkwx"}
 RADAR_STYLE = os.getenv("ADSB_RADAR_STYLE", "phosphor").strip().lower()
 RADAR_STYLES = {"phosphor", "mono", "atc"}
+LOCATION_MODE = os.getenv("ADSB_LOCATION_MODE", "coords").strip().lower()
+AIRPORT_ICAO = os.getenv("ADSB_AIRPORT_ICAO", "").strip().upper() or None
+LOCATION_MODES = {"coords", "airport"}
+if LOCATION_MODE not in LOCATION_MODES:
+    raise RuntimeError("ADSB_LOCATION_MODE doit être coords ou airport.")
+if LOCATION_MODE == "airport" and not AIRPORT_ICAO:
+    raise RuntimeError("ADSB_AIRPORT_ICAO est requis en mode airport.")
 if RADAR_STYLE not in RADAR_STYLES:
     raise RuntimeError("ADSB_RADAR_STYLE doit être phosphor, mono ou atc.")
 if METAR_PROVIDER not in METAR_PROVIDERS:
@@ -178,6 +185,8 @@ BASELINE_CONFIG: dict[str, Any] = {
     "primary_cooldown_s": PRIMARY_COOLDOWN_S,
     "weather_metar_provider": METAR_PROVIDER,
     "radar_style": RADAR_STYLE,
+    "location_mode": LOCATION_MODE,
+    "airport_icao": AIRPORT_ICAO,
 }
 
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
@@ -289,6 +298,11 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         .lower()
     )
     radar_style = str(payload.get("radar_style", values["radar_style"])).strip().lower()
+    location_mode = (
+        str(payload.get("location_mode", values["location_mode"])).strip().lower()
+    )
+    airport_icao = payload.get("airport_icao", values.get("airport_icao"))
+    airport_icao = str(airport_icao).strip().upper() if airport_icao else None
     if primary not in PROVIDERS:
         raise ValueError(f"Source primaire inconnue: {primary!r}.")
     if fallback != "none" and fallback not in PROVIDERS:
@@ -305,6 +319,12 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         raise ValueError("CHECKWX_API_KEY est requis pour CheckWX.")
     if radar_style not in RADAR_STYLES:
         raise ValueError(f"Style radar inconnu: {radar_style!r}.")
+    if location_mode not in LOCATION_MODES:
+        raise ValueError(f"Mode de localisation inconnu: {location_mode!r}.")
+    if location_mode == "airport" and not (
+        airport_icao and re.fullmatch(r"[A-Z0-9]{4}", airport_icao)
+    ):
+        raise ValueError("Un code OACI valide est requis en mode airport.")
 
     if not -90.0 <= values["lat"] <= 90.0:
         raise ValueError("La latitude doit être comprise entre -90 et 90.")
@@ -331,6 +351,8 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
     values["fallback_provider"] = fallback
     values["weather_metar_provider"] = weather_metar
     values["radar_style"] = radar_style
+    values["location_mode"] = location_mode
+    values["airport_icao"] = airport_icao if location_mode == "airport" else None
     return values
 
 
@@ -349,7 +371,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global LAT, LON, DIST_NM, MAX_RADIUS_NM
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
-    global METAR_PROVIDER, RADAR_STYLE
+    global METAR_PROVIDER, RADAR_STYLE, LOCATION_MODE, AIRPORT_ICAO
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
 
@@ -365,6 +387,8 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     FALLBACK_PROVIDER = str(values["fallback_provider"])
     METAR_PROVIDER = str(values["weather_metar_provider"])
     RADAR_STYLE = str(values["radar_style"])
+    LOCATION_MODE = str(values["location_mode"])
+    AIRPORT_ICAO = values["airport_icao"]
     PRIMARY = PROVIDERS[PRIMARY_PROVIDER]
     FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
     _cache = None
@@ -401,6 +425,8 @@ def config_payload() -> dict[str, Any]:
         "metar_taf_configured": bool(METAR_TAF_API_KEY),
         "checkwx_configured": bool(CHECKWX_API_KEY),
         "radar_style": RADAR_STYLE,
+        "location_mode": LOCATION_MODE,
+        "airport_icao": AIRPORT_ICAO,
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
 
@@ -731,6 +757,8 @@ def apply_cache_headers(
     response.headers["X-Center-Lat"] = f"{LAT:.6f}"
     response.headers["X-Center-Lon"] = f"{LON:.6f}"
     response.headers["X-Radar-Style"] = RADAR_STYLE
+    response.headers["X-Location-Mode"] = LOCATION_MODE
+    response.headers["X-Airport-ICAO"] = AIRPORT_ICAO or ""
 
 
 # ============================================================================
@@ -792,6 +820,8 @@ app.add_middleware(
         "X-Center-Lat",
         "X-Center-Lon",
         "X-Radar-Style",
+        "X-Location-Mode",
+        "X-Airport-ICAO",
     ],
 )
 
