@@ -186,6 +186,15 @@ Identifiant et mot de passe par défaut : `admin` / `admin`.
 Les valeurs personnalisées se trouvent dans `ADSB_ADMIN_USER` et
 `ADSB_ADMIN_PASSWORD` du fichier `.env`.
 
+> **Sécurité** : les interfaces radar et desktop n'ont pas d'authentification.
+> Les exposer uniquement sur un réseau de confiance, derrière un reverse proxy
+> HTTPS et/ou un filtrage pare-feu. L'administration `8082` est protégée par
+> HTTP Basic Auth : changer impérativement `admin/admin`. Le token InfluxDB
+> reste dans le volume d'administration et n'est jamais renvoyé au frontend.
+> L'API Homepage est publique mais ne contient aucun secret. Le réglage
+> `ADSB_CORS_ORIGINS=*` est prévu pour un usage local ; le restreindre en cas
+> d'exposition réseau.
+
 Vérifier le flux :
 
 ```bash

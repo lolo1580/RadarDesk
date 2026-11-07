@@ -3,6 +3,7 @@
 
   const dom = {
     form: document.getElementById("configForm"),
+    desktopLink: document.getElementById("desktopLink"),
     radarLink: document.getElementById("radarLink"),
     linkState: document.getElementById("linkState"),
     linkDetail: document.getElementById("linkDetail"),
@@ -82,6 +83,7 @@
       ...options,
       headers: {
         Accept: "application/json",
+        "X-Requested-With": "radardesk-admin",
         ...(options.headers || {}),
       },
     });
@@ -331,32 +333,46 @@
 
     setText(dom.linkState, online ? "EN LIGNE" : "HORS LIGNE");
     dom.linkState.className = `stat__value ${online ? "is-online" : "is-offline"}`;
+    const starting = online && radar.status === "starting";
     setText(
       dom.linkDetail,
-      online
-        ? radar.status === "ok"
-          ? "flux nominal"
-          : radar.status || "connecté"
-        : status.error || "backend injoignable",
+      starting
+        ? "synchronisation du flux"
+        : online
+          ? radar.status === "ok"
+            ? "flux nominal"
+            : radar.status || "connecté"
+          : status.error || "backend injoignable",
     );
     setText(dom.linkPillText, online ? "EN LIGNE" : "HORS LIGNE");
     dom.linkPill.dataset.state = online ? "live" : "offline";
 
-    setText(dom.sourceState, radar.source ? radar.source.toUpperCase() : "—");
+    setText(
+      dom.sourceState,
+      starting ? "SYNC" : radar.source ? radar.source.toUpperCase() : "—",
+    );
     setText(
       dom.sourceDetail,
-      radar.fallback_used ? "SECOURS" : radar.source ? "PRIMAIRE" : "—",
+      starting
+        ? "premier échantillon"
+        : radar.fallback_used
+          ? "SECOURS"
+          : radar.source
+            ? "PRIMAIRE"
+            : "—",
     );
 
     setText(
       dom.cacheState,
-      radar.cache_age_s !== null && radar.cache_age_s !== undefined
-        ? `${Number(radar.cache_age_s).toFixed(1)} S`
-        : "—",
+      starting
+        ? "—"
+        : radar.cache_age_s !== null && radar.cache_age_s !== undefined
+          ? `${Number(radar.cache_age_s).toFixed(1)} S`
+          : "—",
     );
     setText(
       dom.targetState,
-      radar.aircraft_count !== undefined ? radar.aircraft_count : "—",
+      starting ? "—" : radar.aircraft_count !== undefined ? radar.aircraft_count : "—",
     );
 
     dom.securityWarning.hidden = !status.default_credentials;
@@ -418,6 +434,9 @@
 
     if (status.radar_public_port) {
       dom.radarLink.href = `${window.location.protocol}//${window.location.hostname}:${status.radar_public_port}/`;
+    }
+    if (status.desktop_public_port) {
+      dom.desktopLink.href = `${window.location.protocol}//${window.location.hostname}:${status.desktop_public_port}/`;
     }
 
     const now = new Date();

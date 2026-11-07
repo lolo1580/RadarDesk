@@ -521,9 +521,9 @@ def apply_runtime_config_from_file() -> bool:
     return values is not None
 
 
-def config_payload() -> dict[str, Any]:
-    """Configuration publique, utilisée par le frontend et l'administration."""
-    return {
+def config_payload(*, admin: bool = False) -> dict[str, Any]:
+    """Configuration publique ; les détails Influx sont réservés à l'admin."""
+    payload: dict[str, Any] = {
         "lat": LAT,
         "lon": LON,
         "dist_nm": DIST_NM,
@@ -544,18 +544,24 @@ def config_payload() -> dict[str, Any]:
         "location_mode": LOCATION_MODE,
         "airport_icao": AIRPORT_ICAO,
         "influx_enabled": INFLUX_ENABLED,
-        "influx_url": INFLUX_URL,
-        "influx_org": INFLUX_ORG,
-        "influx_bucket": INFLUX_BUCKET,
-        "influx_measurement": INFLUX_MEASUREMENT,
-        "influx_interval_s": INFLUX_INTERVAL_S,
-        "influx_token_configured": bool(INFLUX_TOKEN),
         "stats_enabled": stats_available(),
         "stats_configured": STATS_ENABLED,
         "stats_sample_seconds": STATS_SAMPLE_SECONDS,
         "stats_retention_days": STATS_RETENTION_DAYS,
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
+    if admin:
+        payload.update(
+            {
+                "influx_url": INFLUX_URL,
+                "influx_org": INFLUX_ORG,
+                "influx_bucket": INFLUX_BUCKET,
+                "influx_measurement": INFLUX_MEASUREMENT,
+                "influx_interval_s": INFLUX_INTERVAL_S,
+                "influx_token_configured": bool(INFLUX_TOKEN),
+            }
+        )
+    return payload
 
 
 try:
@@ -864,6 +870,9 @@ _stats_db_error: str | None = None
 _last_stats_recorded_ts = 0
 _last_stats_cleanup_day = ""
 _influx_last_error_at = 0.0
+_stats_summary_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+_stats_summary_lock = asyncio.Lock()
+_STATS_SUMMARY_CACHE_TTL_S = 5.0
 
 
 def stats_available() -> bool:
@@ -1335,6 +1344,33 @@ def stats_summary(
         "retention_days": STATS_RETENTION_DAYS,
     }
 
+async def cached_stats_summary(
+    day: str,
+    days: int,
+    minutes: int,
+    requested_range: int | None = None,
+) -> dict[str, Any]:
+    scope = _stats_scope()
+    key = (day, days, minutes, requested_range, scope)
+    now = time.monotonic()
+    async with _stats_summary_lock:
+        cached = _stats_summary_cache.get(key)
+        if cached is not None and now - cached[0] <= _STATS_SUMMARY_CACHE_TTL_S:
+            return cached[1]
+    result = await asyncio.to_thread(
+        stats_summary, day, days, minutes, requested_range
+    )
+    async with _stats_summary_lock:
+        _stats_summary_cache[key] = (time.monotonic(), result)
+        if len(_stats_summary_cache) > 64:
+            _stats_summary_cache.clear()
+    return result
+
+
+def clear_stats_summary_cache() -> None:
+    _stats_summary_cache.clear()
+
+
 def reset_stats_db() -> int:
     global _last_stats_recorded_ts
     if not _stats_db_ok:
@@ -1670,8 +1706,8 @@ async def api_stats_summary(
             "reason": _stats_db_error if STATS_ENABLED else "disabled",
         }
     try:
-        return await asyncio.to_thread(
-            stats_summary, requested_day, days, minutes, requested_range
+        return await cached_stats_summary(
+            requested_day, days, minutes, requested_range
         )
     except (OSError, sqlite3.Error) as exc:
         logger.error("Lecture des statistiques impossible: %s", exc)
@@ -1721,8 +1757,7 @@ async def api_homepage_widget(
     stats: dict[str, Any] | None = None
     if stats_available():
         try:
-            stats = await asyncio.to_thread(
-                stats_summary,
+            stats = await cached_stats_summary(
                 datetime.now(UTC).strftime("%Y-%m-%d"),
                 1,
                 10,
@@ -2315,6 +2350,12 @@ def _require_internal_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Jeton interne invalide.")
 
 
+@app.get("/internal/config", include_in_schema=False)
+async def internal_config(request: Request) -> dict[str, Any]:
+    _require_internal_token(request)
+    return config_payload(admin=True)
+
+
 @app.post("/internal/stats/reset", include_in_schema=False)
 async def internal_stats_reset(request: Request) -> dict[str, Any]:
     _require_internal_token(request)
@@ -2324,6 +2365,7 @@ async def internal_stats_reset(request: Request) -> dict[str, Any]:
             detail="Statistiques persistantes désactivées ou indisponibles.",
         )
     deleted = await asyncio.to_thread(reset_stats_db)
+    clear_stats_summary_cache()
     logger.info("Statistiques réinitialisées (%d relevé(s) supprimé(s)).", deleted)
     return {"status": "reset", "deleted": deleted}
 
@@ -2357,11 +2399,12 @@ async def internal_reload(request: Request) -> dict[str, Any]:
         logger.error("Rechargement de configuration refusé: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    clear_stats_summary_cache()
     logger.info(
         "Configuration runtime rechargée (%s).",
         "fichier runtime" if active else "valeurs d'environnement",
     )
-    return {"status": "reloaded", "config": config_payload()}
+    return {"status": "reloaded", "config": config_payload(admin=True)}
 
 
 # Les fichiers statiques sont montés après les routes API, uniquement si un

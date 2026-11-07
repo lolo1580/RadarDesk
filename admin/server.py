@@ -42,8 +42,27 @@ INTERNAL_TOKEN = os.getenv("ADSB_INTERNAL_TOKEN", "").strip()
 RADAR_BACKEND_URL = os.getenv("RADAR_BACKEND_URL", "http://backend:8000").rstrip("/")
 RUNTIME_CONFIG_FILE = Path(os.getenv("ADSB_RUNTIME_CONFIG_FILE", "/data/runtime.json"))
 RADAR_PUBLIC_PORT = int(os.getenv("RADAR_PUBLIC_PORT", "8081"))
+DESKTOP_PUBLIC_PORT = int(os.getenv("DESKTOP_PUBLIC_PORT", "8083"))
 REQUEST_TIMEOUT_S = float(os.getenv("ADMIN_REQUEST_TIMEOUT", "6.0"))
 LOG_LEVEL = os.getenv("ADSB_LOG_LEVEL", "INFO").upper()
+BACKEND_UID = int(os.getenv("ADSB_BACKEND_UID", "10001"))
+BACKEND_GID = int(os.getenv("ADSB_BACKEND_GID", "10001"))
+ADMIN_CSRF_HEADER = "X-Requested-With"
+ADMIN_CSRF_VALUE = "radardesk-admin"
+MAX_ADMIN_BODY_BYTES = 64 * 1024
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "X-Robots-Tag": "noindex, nofollow",
+    "Content-Security-Policy": (
+        "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; script-src 'self'; "
+        "style-src 'self'; connect-src 'self'"
+    ),
+}
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -164,24 +183,66 @@ app = FastAPI(
 )
 
 
+def with_security_headers(response: Response) -> Response:
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 @app.middleware("http")
 async def basic_auth_middleware(request: Request, call_next):
     # Le healthcheck Docker ne doit pas dépendre des credentials.
     if request.url.path == "/healthz":
-        return await call_next(request)
+        return with_security_headers(await call_next(request))
 
     if not credentials_are_valid(request.headers.get("Authorization")):
-        return Response(
-            status_code=401,
-            content="Authentification RadarDesk Admin requise.",
-            media_type="text/plain",
-            headers={
-                "WWW-Authenticate": 'Basic realm="RadarDesk Admin", charset="UTF-8"',
-                "Cache-Control": "no-store",
-            },
+        return with_security_headers(
+            Response(
+                status_code=401,
+                content="Authentification RadarDesk Admin requise.",
+                media_type="text/plain",
+                headers={
+                    "WWW-Authenticate": 'Basic realm="RadarDesk Admin", charset="UTF-8"',
+                    "Cache-Control": "no-store",
+                },
+            )
         )
 
+    if (
+        request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and request.url.path.startswith("/api/")
+        and request.headers.get(ADMIN_CSRF_HEADER) != ADMIN_CSRF_VALUE
+    ):
+        return with_security_headers(
+            Response(
+                status_code=403,
+                content="Requête refusée : en-tête anti-CSRF manquant.",
+                media_type="text/plain",
+            )
+        )
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_ADMIN_BODY_BYTES:
+                return with_security_headers(
+                    Response(
+                        status_code=413,
+                        content="Corps de requête trop volumineux.",
+                        media_type="text/plain",
+                    )
+                )
+        except ValueError:
+            return with_security_headers(
+                Response(
+                    status_code=400,
+                    content="Longueur de requête invalide.",
+                    media_type="text/plain",
+                )
+            )
+
     response = await call_next(request)
+    with_security_headers(response)
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
@@ -265,14 +326,17 @@ async def reload_radar(request: Request) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"status": "reloaded"}
 
 
-async def call_radar_internal(request: Request, path: str) -> dict[str, Any]:
+async def call_radar_internal(
+    request: Request, path: str, method: str = "POST"
+) -> dict[str, Any]:
     if not INTERNAL_TOKEN:
         raise HTTPException(
             status_code=503,
             detail="ADSB_INTERNAL_TOKEN n'est pas configuré.",
         )
     try:
-        response = await request.app.state.http.post(
+        response = await request.app.state.http.request(
+            method,
             f"{RADAR_BACKEND_URL}{path}",
             headers={"X-Internal-Token": INTERNAL_TOKEN},
         )
@@ -294,6 +358,17 @@ async def call_radar_internal(request: Request, path: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def secure_runtime_file(path: Path) -> None:
+    try:
+        os.chown(path, BACKEND_UID, BACKEND_GID)
+        os.chmod(path, 0o640)
+    except OSError:
+        try:
+            os.chmod(path, 0o644)
+        except OSError:
+            pass
+
+
 def runtime_snapshot() -> bytes | None:
     if not RUNTIME_CONFIG_FILE.is_file():
         return None
@@ -305,7 +380,7 @@ def restore_runtime_snapshot(snapshot: bytes | None) -> None:
         RUNTIME_CONFIG_FILE.unlink(missing_ok=True)
         return
     RUNTIME_CONFIG_FILE.write_bytes(snapshot)
-    os.chmod(RUNTIME_CONFIG_FILE, 0o644)
+    secure_runtime_file(RUNTIME_CONFIG_FILE)
 
 
 def write_runtime_config(payload: RuntimeConfigPayload) -> None:
@@ -328,7 +403,7 @@ def write_runtime_config(payload: RuntimeConfigPayload) -> None:
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    os.chmod(temporary, 0o644)
+    secure_runtime_file(temporary)
     os.replace(temporary, RUNTIME_CONFIG_FILE)
 
 
@@ -356,7 +431,9 @@ async def api_status(request: Request) -> JSONResponse:
 
     try:
         radar_health = await radar_json(request, "/api/health")
-        radar_config = await radar_json(request, "/api/config")
+        radar_config = await call_radar_internal(
+            request, "/internal/config", method="GET"
+        )
     except HTTPException as exc:
         error = str(exc.detail)
 
@@ -368,6 +445,7 @@ async def api_status(request: Request) -> JSONResponse:
             "config": radar_config,
             "runtime_file_exists": RUNTIME_CONFIG_FILE.is_file(),
             "radar_public_port": RADAR_PUBLIC_PORT,
+            "desktop_public_port": DESKTOP_PUBLIC_PORT,
             "default_credentials": DEFAULT_CREDENTIALS,
         }
     )
@@ -375,7 +453,7 @@ async def api_status(request: Request) -> JSONResponse:
 
 @app.get("/api/config", tags=["admin"])
 async def api_get_config(request: Request) -> dict[str, Any]:
-    return await radar_json(request, "/api/config")
+    return await call_radar_internal(request, "/internal/config", method="GET")
 
 
 @app.put("/api/config", tags=["admin"])
