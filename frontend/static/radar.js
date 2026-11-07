@@ -1413,7 +1413,8 @@
 
       // Pistes : lignes géoréférencées par leurs deux seuils réels.
       const airportRunways = state.runways.get(airport.icao) || [];
-      for (const runway of airportRunways) {
+      for (let runwayIndex = 0; runwayIndex < airportRunways.length; runwayIndex += 1) {
+        const runway = airportRunways[runwayIndex];
         if (!Array.isArray(runway) || runway.length < 6) {
           continue;
         }
@@ -1451,33 +1452,64 @@
         const y1 = cy - Math.cos(leBearing * DEG) * leRadius;
         const x2 = cx + Math.sin(heBearing * DEG) * heRadius;
         const y2 = cy - Math.cos(heBearing * DEG) * heRadius;
+        const deltaX = x2 - x1;
+        const deltaY = y2 - y1;
+        const screenLength = Math.hypot(deltaX, deltaY);
+        if (screenLength < 1) {
+          continue;
+        }
+
+        // Bande de piste à l'échelle, avec une largeur minimale lisible.
         const runwayWidth = clamp(
           ((Number(widthFt) || 100) / 6076.12 / rangeNm) * R,
-          1.5,
-          4,
+          3.2,
+          7,
         );
-        ctx.lineCap = "round";
-        ctx.strokeStyle = "rgba(4, 12, 18, 0.9)";
-        ctx.lineWidth = runwayWidth + 1.6;
+        const halfWidth = runwayWidth / 2;
+        const perpX = (-deltaY / screenLength) * halfWidth;
+        const perpY = (deltaX / screenLength) * halfWidth;
+
         ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-        ctx.strokeStyle = "rgba(135, 235, 248, 0.72)";
-        ctx.lineWidth = runwayWidth;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
+        ctx.moveTo(x1 + perpX, y1 + perpY);
+        ctx.lineTo(x2 + perpX, y2 + perpY);
+        ctx.lineTo(x2 - perpX, y2 - perpY);
+        ctx.lineTo(x1 - perpX, y1 - perpY);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(3, 12, 17, 0.96)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(135, 235, 248, 0.8)";
+        ctx.lineWidth = 0.9;
         ctx.stroke();
 
-        if (rangeNm <= 10 && runway[6] && runway[7]) {
+        // Axe de piste en pointillés.
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "rgba(205, 250, 255, 0.55)";
+        ctx.lineWidth = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.restore();
+
+        if (
+          rangeNm <= 10 &&
+          runway[6] &&
+          runway[7] &&
+          (runwayIndex === 0 || airportRunways.length <= 2)
+        ) {
           const midX = (x1 + x2) / 2;
           const midY = (y1 + y2) / 2;
-          ctx.globalAlpha = 0.58;
-          ctx.fillStyle = "rgba(155, 245, 255, 0.85)";
-          ctx.font = `600 ${Math.max(6.5, view.detailFont - 1.4)}px ${FONT_STACK}`;
+          const side = perpX < 0 ? -1 : 1;
+          ctx.globalAlpha = 0.72;
+          ctx.fillStyle = "rgba(175, 248, 255, 0.92)";
+          ctx.font = `600 ${Math.max(6.5, view.detailFont - 1.3)}px ${FONT_STACK}`;
           ctx.textAlign = "left";
-          ctx.fillText(`${runway[6]}/${runway[7]}`, midX + 4, midY - 5);
+          ctx.fillText(
+            `${runway[6]}/${runway[7]}`,
+            midX + (side > 0 ? 5 : -5),
+            midY + (side > 0 ? -6 : 8),
+          );
           ctx.globalAlpha = 1;
         }
       }

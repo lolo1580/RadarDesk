@@ -15,8 +15,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Anneaux de distance, couronne de boussole graduée, réticule central.
 - Cibles orientées selon leur cap, étiquettes callsign / altitude / vitesse.
 - Aéroports majeurs et moyens en cyan, avec codes IATA/OACI, filtrés selon la portée.
-- Tracé des pistes réelles (seuils, orientation, largeur) autour des aéroports,
-  visible dès 5 NM.
+- Tracé des pistes réelles (seuils, orientation, largeur, désignations) sous
+  forme de bandes, visible dès 5 NM.
 - Météo aviation : badges METAR VFR/MVFR/IFR/LIFR et fiche détaillée au clic.
 - Couche de précipitations animée RainViewer, filtrée selon la portée.
 - Boutons `−` / `+` pour ajuster la distance d'affichage sans nouvel appel API.
@@ -446,6 +446,10 @@ courante. Les gros aéroports restent étiquetés à grande portée ; les aérop
 moyens sont étiquetés en priorité à courte portée pour éviter la surcharge.
 
 Source : [OurAirports](https://ourairports.com/data/), données du domaine public.
+Les pistes proviennent de `runways.json` : seuils réels, longueur, largeur,
+orientation et désignations. Les taxiways, terminaux et bâtiments ne sont pas
+inclus dans ce jeu de données.
+
 La génération et le filtrage du jeu de données sont décrits dans
 `frontend/static/data/README.txt`.
 
