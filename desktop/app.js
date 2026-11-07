@@ -5,14 +5,12 @@
   const RANGE_STEPS = [5, 10, 25, 50, 75, 100, 125, 150, 200, 250];
   const POLL_MS = 3000;
   const WEATHER_REFRESH_MS = 5 * 60 * 1000;
+  const REDUCED_MOTION =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
   const PLANE_SVG =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-.55 0-1 .45-1 1v6.1L4 13v2l7-2.1v5.3l-2 1.5V21l3-1 3 1v-1.3l-2-1.5v-5.3l7 2.1v-2l-7-3.9V3c0-.55-.45-1-1-1z"/></svg>';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
-  const EMERGENCY = {
-    "7500": { label: "HIJACK", color: "#f87171" },
-    "7600": { label: "RADIO", color: "#f87171" },
-    "7700": { label: "URGENCE", color: "#f87171" },
-  };
+  const EMERGENCY = new Set(["7500", "7600", "7700"]);
   const MILITARY_RE = /^(?:RCH|REACH|ASCOT|RRR|GAF|IAM|CTM|FAF|COTAM|ARM|NAVY|USAF|PAT|DUKE|HUNT|MAGMA|VIV|CFC|RCAF|PLF|BAF|SUI|MIL|FNY|AAC|RRF|TYPH|HAWK|FALCON)/;
   const DEFAULT_CONFIG = {
     lat: 46.8687,
@@ -64,7 +62,6 @@
   };
 
   const state = {
-    config: { ...DEFAULT_CONFIG },
     center: { lat: DEFAULT_CONFIG.lat, lon: DEFAULT_CONFIG.lon },
     rangeNm: DEFAULT_CONFIG.dist_nm,
     maxRangeNm: DEFAULT_CONFIG.max_radius_nm,
@@ -84,6 +81,8 @@
     metar: new Map(),
     metarSignature: "",
     metarFetchedAt: 0,
+    metarController: null,
+    metarLoadingSignature: "",
     weather: { host: null, path: null, layer: null },
     map: null,
     airportLayer: null,
@@ -93,8 +92,7 @@
     centerMarker: null,
     polling: false,
     pollTimer: 0,
-    lastSuccessAt: 0,
-    failures: 0,
+    pollMs: POLL_MS,
     lastClockSecond: -1,
   };
 
@@ -122,6 +120,16 @@
     const number = Number.parseFloat(value);
     return Number.isFinite(number) ? number : null;
   };
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
 
   function distanceNm(lat1, lon1, lat2, lon2) {
     const radiusNm = 3440.065;
@@ -221,20 +229,20 @@
 
   function buildAircraft(raw) {
     const hex = String(raw.hex || raw.icao || "").trim().toLowerCase();
-    const lat = Number(raw.lat);
-    const lon = Number(raw.lon);
-    if (!hex || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const lat = numberOrNull(raw.lat);
+    const lon = numberOrNull(raw.lon);
+    if (!hex || lat === null || lon === null) return null;
 
     const distance = distanceNm(state.center.lat, state.center.lon, lat, lon);
     const bearing = bearingDeg(state.center.lat, state.center.lon, lat, lon);
     const callsign = cleanCallsign(raw.callsign) || hex.toUpperCase();
     const type = cleanType(raw.type);
     const squawk = raw.squawk ? String(raw.squawk) : null;
-    const altitude = Number.isFinite(Number(raw.alt_baro)) ? Number(raw.alt_baro) : null;
+    const altitude = numberOrNull(raw.alt_baro);
     const onGround = Boolean(raw.on_ground) || raw.alt_baro === "ground";
-    const speed = Number.isFinite(Number(raw.gs)) ? Number(raw.gs) : null;
-    const track = Number.isFinite(Number(raw.track)) ? Number(raw.track) : null;
-    const emergency = squawk && EMERGENCY[squawk];
+    const speed = numberOrNull(raw.gs);
+    const track = numberOrNull(raw.track);
+    const emergency = squawk ? EMERGENCY.has(squawk) : false;
     const military = !emergency && MILITARY_RE.test(callsign);
     const kind = emergency ? "emergency" : military ? "military" : "normal";
 
@@ -260,6 +268,7 @@
   function updateAircraft(data) {
     const next = [];
     for (const raw of data) {
+      if (!raw || typeof raw !== "object") continue;
       const aircraft = buildAircraft(raw);
       if (aircraft) next.push(aircraft);
     }
@@ -286,6 +295,9 @@
       zoomControl: false,
       attributionControl: true,
       preferCanvas: true,
+      zoomAnimation: !REDUCED_MOTION,
+      fadeAnimation: !REDUCED_MOTION,
+      markerZoomAnimation: !REDUCED_MOTION,
     }).setView([state.center.lat, state.center.lon], 8);
 
     // Fond de carte sombre Esri, sans clé API. Le calque de référence ajoute
@@ -338,7 +350,9 @@
     }).addTo(map);
 
     state.map = map;
-    map.on("click", () => selectAircraft(null));
+    map.on("click", () => {
+      if (state.selectedHex) selectAircraft(null);
+    });
     fitRange();
   }
 
@@ -351,6 +365,7 @@
     state.map.fitBounds(state.rangeCircle.getBounds(), {
       padding: [28, 28],
       maxZoom: 11,
+      animate: !REDUCED_MOTION,
     });
   }
 
@@ -422,8 +437,8 @@
     if (!metar) {
       return `<div class="airport-popup"><h3>${escapeHtml(airport.iata ? `${airport.iata}/${airport.icao}` : airport.icao)}</h3><span class="airport-title">${escapeHtml(airport.name)}</span><span class="airport-title">${airport.distance.toFixed(1)} NM du centre</span><span class="airport-title">METAR indisponible</span></div>`;
     }
-    const clouds = (metar.clouds || [])
-      .filter((cloud) => cloud.cover && cloud.base_ft !== null)
+    const clouds = (Array.isArray(metar.clouds) ? metar.clouds : [])
+      .filter((cloud) => cloud.cover && numberOrNull(cloud.base_ft) !== null)
       .map((cloud) => `${cloud.cover} ${cloud.base_ft} ft`)
       .join(" · ");
     const category = metar.flight_category || "UNKNOWN";
@@ -440,18 +455,20 @@
     const wind =
       metar.wind_direction === "VRB"
         ? `VRB / ${metar.wind_speed_kt ?? "—"} kt`
-        : `${metar.wind_direction ?? "—"}° / ${metar.wind_speed_kt ?? "—"} kt`;
+        : metar.wind_direction === null || metar.wind_direction === undefined
+          ? `— / ${metar.wind_speed_kt ?? "—"} kt`
+          : `${metar.wind_direction}° / ${metar.wind_speed_kt ?? "—"} kt`;
     return `<div class="airport-popup">
       <h3>${escapeHtml(airport.iata ? `${airport.iata}/${airport.icao}` : airport.icao)}</h3>
       <span class="airport-title">${escapeHtml(airport.name)} · ${airport.distance.toFixed(1)} NM</span>
       <span class="airport-category" style="color:${color}">${escapeHtml(category)}</span>
       <dl>
         <dt>Vent</dt><dd>${escapeHtml(wind)}</dd>
-        <dt>Visibilité</dt><dd>${metar.visibility_sm ?? "—"} SM</dd>
+        <dt>Visibilité</dt><dd>${escapeHtml(metar.visibility_sm ?? "—")} SM</dd>
         <dt>Plafond</dt><dd>${escapeHtml(clouds || "—")}</dd>
-        <dt>Temp.</dt><dd>${metar.temperature_c ?? "—"}° / ${metar.dewpoint_c ?? "—"}°</dd>
-        <dt>QNH</dt><dd>${metar.altimeter_hpa ?? "—"} hPa</dd>
-        <dt>Observé</dt><dd>${formatObservation(metar.observed)}</dd>
+        <dt>Temp.</dt><dd>${escapeHtml(metar.temperature_c ?? "—")}° / ${escapeHtml(metar.dewpoint_c ?? "—")}°</dd>
+        <dt>QNH</dt><dd>${escapeHtml(metar.altimeter_hpa ?? "—")} hPa</dd>
+        <dt>Observé</dt><dd>${escapeHtml(formatObservation(metar.observed))}</dd>
       </dl>
       <p class="raw">${escapeHtml(metar.raw || "")}</p>
     </div>`;
@@ -490,10 +507,17 @@
         const runways = state.runways[airport.icao] || [];
         for (const runway of runways) {
           if (!Array.isArray(runway) || runway.length < 4) continue;
+          const lat1 = numberOrNull(runway[0]);
+          const lon1 = numberOrNull(runway[1]);
+          const lat2 = numberOrNull(runway[2]);
+          const lon2 = numberOrNull(runway[3]);
+          if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) {
+            continue;
+          }
           const line = L.polyline(
             [
-              [Number(runway[0]), Number(runway[1])],
-              [Number(runway[2]), Number(runway[3])],
+              [lat1, lon1],
+              [lat2, lon2],
             ],
             {
               color: "#7dd3fc",
@@ -523,8 +547,8 @@
   async function loadAirportData() {
     try {
       const [airportsResponse, runwaysResponse] = await Promise.all([
-        fetch("/data/airports.json", { cache: "force-cache" }),
-        fetch("/data/runways.json", { cache: "force-cache" }),
+        fetchWithTimeout("/data/airports.json", { cache: "force-cache" }, 12000),
+        fetchWithTimeout("/data/runways.json", { cache: "force-cache" }, 12000),
       ]);
       if (airportsResponse.ok) {
         const rows = await airportsResponse.json();
@@ -532,28 +556,31 @@
           state.airports = rows
             .filter((row) => Array.isArray(row) && row.length >= 6)
             .map((row) => {
-              const distance = distanceNm(
-                state.center.lat,
-                state.center.lon,
-                Number(row[4]),
-                Number(row[5]),
-              );
+              const lat = numberOrNull(row[4]);
+              const lon = numberOrNull(row[5]);
+              if (!row[0] || lat === null || lon === null) return null;
               return {
-                icao: row[0],
+                icao: String(row[0]).toUpperCase(),
                 iata: row[1] || "",
                 name: row[2] || "",
                 type: row[3],
-                lat: Number(row[4]),
-                lon: Number(row[5]),
-                distance,
+                lat,
+                lon,
+                distance: distanceNm(
+                  state.center.lat,
+                  state.center.lon,
+                  lat,
+                  lon,
+                ),
                 bearing: bearingDeg(
                   state.center.lat,
                   state.center.lon,
-                  Number(row[4]),
-                  Number(row[5]),
+                  lat,
+                  lon,
                 ),
               };
-            });
+            })
+            .filter(Boolean);
         }
       }
       if (runwaysResponse.ok) {
@@ -564,7 +591,11 @@
       }
       renderAirports();
     } catch {
-      // Aéroports optionnels.
+      // Aéroports optionnels : nouvelle tentative si le jeu de données n'a
+      // jamais pu être chargé.
+      window.setTimeout(() => {
+        if (!state.airports.length) loadAirportData();
+      }, 30000);
     }
   }
 
@@ -584,21 +615,34 @@
     ) {
       return;
     }
+    if (signature && signature === state.metarLoadingSignature) return;
 
     state.metarSignature = signature;
     if (!ids.length) {
+      state.metarController?.abort();
+      state.metarController = null;
+      state.metarLoadingSignature = "";
       state.metar.clear();
+      state.metarFetchedAt = Date.now();
       updateAirportPopups();
       return;
     }
 
+    state.metarController?.abort();
+    const controller = new AbortController();
+    state.metarController = controller;
+    state.metarLoadingSignature = signature;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+
     try {
       const response = await fetch(
         `/api/weather/metar?ids=${encodeURIComponent(signature)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: controller.signal },
       );
+      if (controller !== state.metarController) return;
       if (response.ok) {
         const payload = await response.json();
+        if (controller !== state.metarController) return;
         if (payload && payload.stations) {
           state.metar = new Map(Object.entries(payload.stations));
           updateAirportPopups();
@@ -607,7 +651,12 @@
     } catch {
       // Le reste de la carte reste utilisable.
     } finally {
-      state.metarFetchedAt = Date.now();
+      window.clearTimeout(timeout);
+      if (controller === state.metarController) {
+        state.metarController = null;
+        state.metarLoadingSignature = "";
+        state.metarFetchedAt = Date.now();
+      }
     }
   }
 
@@ -615,12 +664,30 @@
      Météo radar
      ======================================================================== */
 
+  function latestObservedFrame(frames) {
+    if (!Array.isArray(frames) || !frames.length) return null;
+    const nowSeconds = Date.now() / 1000;
+    let best = null;
+    for (const frame of frames) {
+      if (!frame?.path) continue;
+      const time = numberOrNull(frame.time);
+      if (time === null || time > nowSeconds + 60) continue;
+      if (!best || time > best.time) best = { frame, time };
+    }
+    // Si toutes les frames sont des prévisions, on retombe sur la dernière.
+    return best ? best.frame : frames[frames.length - 1];
+  }
+
   async function loadWeather() {
     try {
-      const response = await fetch("/api/weather/radar", { cache: "no-store" });
+      const response = await fetchWithTimeout(
+        "/api/weather/radar",
+        { cache: "no-store" },
+        10000,
+      );
       if (!response.ok) return;
       const payload = await response.json();
-      const frame = payload.frames?.[payload.frames.length - 1];
+      const frame = latestObservedFrame(payload.frames);
       if (!payload.host || !frame?.path) return;
       state.weather.host = payload.host;
       state.weather.path = frame.path;
@@ -718,7 +785,17 @@
       const active = header.dataset.sort === state.sortKey;
       header.dataset.active = String(active);
       header.dataset.dir = active && state.sortDir < 0 ? "desc" : "asc";
+      header.setAttribute(
+        "aria-sort",
+        active ? (state.sortDir < 0 ? "descending" : "ascending") : "none",
+      );
     }
+
+    const activeRow = document.activeElement;
+    const activeHex =
+      activeRow && dom.aircraftRows.contains(activeRow) && activeRow.dataset.hex
+        ? activeRow.dataset.hex
+        : null;
 
     const fragment = document.createDocumentFragment();
     for (const aircraft of list) {
@@ -747,7 +824,7 @@
         row.appendChild(cell);
       }
 
-      const select = () => selectAircraft(aircraft.hex, true);
+      const select = () => selectAircraft(row.dataset.hex, true);
       row.addEventListener("click", select);
       row.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -760,6 +837,15 @@
 
     dom.aircraftRows.replaceChildren(fragment);
     dom.emptyState.classList.toggle("is-visible", list.length === 0);
+
+    // Le tableau est reconstruit à chaque poll : on restitue le focus pour ne
+    // pas interrompre la navigation clavier.
+    if (activeHex) {
+      const restored = [...dom.aircraftRows.children].find(
+        (row) => row.dataset.hex === activeHex,
+      );
+      restored?.focus({ preventScroll: true });
+    }
   }
 
   function renderSelection() {
@@ -801,9 +887,21 @@
     if (hex && pan && state.map) {
       const aircraft = state.byHex.get(hex);
       if (aircraft) {
-        state.map.panTo([aircraft.lat, aircraft.lon], { animate: true });
+        state.map.panTo([aircraft.lat, aircraft.lon], {
+          animate: !REDUCED_MOTION,
+        });
       }
     }
+  }
+
+  function csvCell(value) {
+    let text = String(value);
+    // Neutralise les formules tableur sans transformer les nombres négatifs
+    // (longitudes) en texte.
+    if (/^[=+@]/.test(text) || (/^-/.test(text) && !/^-?\d+(?:\.\d+)?$/.test(text))) {
+      text = `'${text}`;
+    }
+    return `"${text.replace(/"/g, '""')}"`;
   }
 
   function exportCsv() {
@@ -840,7 +938,7 @@
           aircraft.lon,
           aircraft.onGround ? "1" : "0",
         ]
-          .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+          .map(csvCell)
           .join(","),
       );
     }
@@ -852,8 +950,11 @@
     const now = new Date();
     link.href = url;
     link.download = `radardesk-desktop-${now.toISOString().slice(0, 19).replace(/:/g, "-")}Z.csv`;
+    link.style.display = "none";
+    document.body.append(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   /* ========================================================================
@@ -899,12 +1000,7 @@
   function applyCenter(center) {
     state.center = center;
     if (!state.map) return;
-    state.rangeCircle.setLatLng([center.lat, center.lon]);
-    state.centerMarker.setLatLng([center.lat, center.lon]);
-    state.map.fitBounds(state.rangeCircle.getBounds(), {
-      padding: [28, 28],
-      maxZoom: 11,
-    });
+    fitRange();
     updateHud();
     // Recalcule les distances aéroports.
     state.airports = state.airports.map((airport) => ({
@@ -931,18 +1027,28 @@
 
   async function loadConfig() {
     try {
-      const response = await fetch("/api/config", { cache: "no-store" });
+      const response = await fetchWithTimeout("/api/config", { cache: "no-store" });
       if (!response.ok) throw new Error();
       const config = await response.json();
-      state.config = config;
-      state.center = {
-        lat: Number(config.lat),
-        lon: Number(config.lon),
-      };
-      state.maxRangeNm = Number(config.max_radius_nm) || 150;
-      state.rangeNm = Number(config.dist_nm) || 50;
+      const lat = numberOrNull(config.lat);
+      const lon = numberOrNull(config.lon);
+      if (lat !== null && lon !== null) {
+        state.center = { lat, lon };
+      }
+      state.maxRangeNm = Math.min(
+        250,
+        Math.max(5, numberOrNull(config.max_radius_nm) || 150),
+      );
+      state.rangeNm = Math.min(
+        state.maxRangeNm,
+        Math.max(5, numberOrNull(config.dist_nm) || 50),
+      );
       state.locationMode = config.location_mode || "coords";
       state.airportIcao = config.airport_icao || null;
+      const refreshMs = numberOrNull(config.refresh_ms);
+      if (refreshMs !== null) {
+        state.pollMs = Math.min(60000, Math.max(500, refreshMs));
+      }
       populateRanges();
     } catch {
       populateRanges();
@@ -978,8 +1084,13 @@
       const centerLat = numberOrNull(response.headers.get("X-Center-Lat"));
       const centerLon = numberOrNull(response.headers.get("X-Center-Lon"));
       const maxRange = numberOrNull(response.headers.get("X-Max-Range-NM"));
+      const refreshMs = numberOrNull(response.headers.get("X-Refresh-Ms"));
       const locationMode = response.headers.get("X-Location-Mode");
       const airportIcao = response.headers.get("X-Airport-ICAO");
+
+      if (refreshMs !== null) {
+        state.pollMs = Math.min(60000, Math.max(500, refreshMs));
+      }
 
       if (centerLat !== null && centerLon !== null) {
         const changed =
@@ -989,11 +1100,15 @@
           applyCenter({ lat: centerLat, lon: centerLon });
         }
       }
-      if (maxRange !== null && Math.round(maxRange) !== state.maxRangeNm) {
-        state.maxRangeNm = Math.round(maxRange);
-        populateRanges();
-        if (state.rangeNm > state.maxRangeNm) {
-          setRange(state.maxRangeNm);
+      if (maxRange !== null) {
+        const nextMax = Math.min(250, Math.max(5, Math.round(maxRange)));
+        if (nextMax !== state.maxRangeNm) {
+          state.maxRangeNm = nextMax;
+          const previousRange = state.rangeNm;
+          populateRanges();
+          if (state.rangeNm !== previousRange) {
+            setRange(state.rangeNm);
+          }
         }
       }
       state.locationMode = locationMode || state.locationMode;
@@ -1001,8 +1116,6 @@
       updateHud();
 
       updateAircraft(payload);
-      state.lastSuccessAt = Date.now();
-      state.failures = 0;
       setText(dom.sourceName, (upstream || "—").toUpperCase());
       setText(
         dom.lastUpdate,
@@ -1038,7 +1151,7 @@
   function schedulePoll() {
     window.clearTimeout(state.pollTimer);
     if (document.hidden) return;
-    state.pollTimer = window.setTimeout(poll, POLL_MS);
+    state.pollTimer = window.setTimeout(poll, state.pollMs);
   }
 
   /* ========================================================================
@@ -1072,7 +1185,10 @@
   dom.rangeSelect.addEventListener("change", () => {
     setRange(Number(dom.rangeSelect.value));
   });
-  dom.weatherToggle.addEventListener("change", applyWeatherLayer);
+  dom.weatherToggle.addEventListener("change", () => {
+    if (dom.weatherToggle.checked && !state.weather.path) loadWeather();
+    applyWeatherLayer();
+  });
   dom.runwayToggle.addEventListener("change", renderAirports);
   dom.searchInput.addEventListener("input", () => {
     state.search = dom.searchInput.value;
@@ -1086,20 +1202,34 @@
   dom.fullscreenBtn.addEventListener("click", toggleFullscreen);
   document.addEventListener("pointerdown", requestWakeLock, { once: true });
 
+  function toggleSort(header) {
+    const key = header.dataset.sort;
+    if (state.sortKey === key) state.sortDir *= -1;
+    else {
+      state.sortKey = key;
+      state.sortDir = key === "altitude" || key === "speed" ? -1 : 1;
+    }
+    renderTable();
+  }
+
   for (const header of document.querySelectorAll("[data-sort]")) {
-    header.addEventListener("click", () => {
-      const key = header.dataset.sort;
-      if (state.sortKey === key) state.sortDir *= -1;
-      else {
-        state.sortKey = key;
-        state.sortDir = key === "altitude" || key === "speed" ? -1 : 1;
+    header.tabIndex = 0;
+    header.addEventListener("click", () => toggleSort(header));
+    header.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleSort(header);
       }
-      renderTable();
     });
   }
 
+  document.addEventListener("fullscreenchange", () => {
+    window.setTimeout(() => state.map?.invalidateSize(), 150);
+  });
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
+      requestWakeLock();
       poll();
       refreshMetar(true);
       loadWeather();
@@ -1108,15 +1238,21 @@
 
   window.setInterval(updateClock, 250);
   window.setInterval(() => {
+    if (document.hidden) return;
     refreshMetar(true);
     loadWeather();
   }, WEATHER_REFRESH_MS);
   updateClock();
 
   (async () => {
+    populateRanges();
+    updateHud();
     await loadConfig();
     initMap();
-    await Promise.all([loadAirportData(), loadWeather()]);
+    // Le flux ADS-B ne dépend pas des couches optionnelles : on démarre le
+    // polling tout de suite, puis on charge aéroports et météo en parallèle.
     poll();
+    loadAirportData();
+    loadWeather();
   })();
 })();

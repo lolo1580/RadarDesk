@@ -165,7 +165,7 @@ Ouvrir l'administration :
 http://localhost:8082
 ```
 
-Ouvrir la console desktop avancée :
+Ouvrir l'interface desktop :
 
 ```text
 http://localhost:8083
@@ -239,7 +239,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
-| `ADSB_DESKTOP_PORT` | `8083` | Port hôte de l'interface desktop avancée |
+| `ADSB_DESKTOP_PORT` | `8083` | Port hôte de l'interface desktop standard |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
