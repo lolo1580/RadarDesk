@@ -67,8 +67,9 @@ Airplanes.live     adsb.lol
 └───────────────────────────┘
 ```
 
-Le frontend et l'administration sont exposés sur la machine hôte. Le backend
-radar n'est pas accessible directement depuis l'extérieur du réseau Docker.
+Le frontend mobile (`8081`), l'administration (`8082`) et la console desktop
+avancée (`8083`) sont exposés sur la machine hôte. Le backend radar n'est pas
+accessible directement depuis l'extérieur du réseau Docker.
 
 ## Arborescence
 
@@ -96,8 +97,10 @@ RadarDesk/
 │           └── airports.json
 └── frontend/
     ├── Dockerfile
+    ├── Dockerfile.desktop
     ├── .dockerignore
     ├── nginx.conf
+    ├── nginx-desktop.conf
     ├── index.html
     └── static/
         ├── style.css
@@ -139,6 +142,12 @@ Ouvrir l'administration :
 
 ```text
 http://localhost:8082
+```
+
+Ouvrir la console desktop avancée :
+
+```text
+http://localhost:8083
 ```
 
 Identifiant et mot de passe par défaut : `admin` / `admin`.
@@ -209,6 +218,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
+| `ADSB_DESKTOP_PORT` | `8083` | Port hôte de l'interface desktop avancée |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
@@ -327,6 +337,22 @@ Endpoint interne non exposé par Nginx. Il recharge le fichier
 `/data/runtime.json` dans le backend. Il exige l'en-tête `X-Internal-Token`
 correspondant à `ADSB_INTERNAL_TOKEN`. Le service d'administration l'appelle
 après chaque modification.
+
+## Interface desktop avancée
+
+Le service `desktop` reprend le scope radar sur un troisième port TCP et ajoute
+un panneau opérationnel :
+
+- table complète des cibles dans la bulle ;
+- recherche par indicatif, type, hex ou squawk ;
+- filtres en vol / au sol / urgences ;
+- tri par indicatif, type, altitude, vitesse, squawk ou distance ;
+- sélection d'une ligne pour focaliser la cible sur le radar ;
+- fiche détaillée de la cible sélectionnée ;
+- export CSV de la sélection filtrée ;
+- accès à 8083, sur le même backend et les mêmes données que le radar mobile.
+
+Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
 ## Administration
 

@@ -94,6 +94,8 @@
      DOM
      ======================================================================== */
 
+  const isDesktopMode = document.body.classList.contains("desktop-mode");
+
   const dom = {
     scope: document.getElementById("scope"),
     canvas: document.getElementById("radarCanvas"),
@@ -139,6 +141,21 @@
     weatherQnh: document.getElementById("weatherQnh"),
     weatherObserved: document.getElementById("weatherObserved"),
     weatherRaw: document.getElementById("weatherRaw"),
+    fleetCount: document.getElementById("fleetCount"),
+    fleetSearch: document.getElementById("fleetSearch"),
+    fleetFilter: document.getElementById("fleetFilter"),
+    fleetExport: document.getElementById("fleetExport"),
+    fleetRows: document.getElementById("fleetRows"),
+    fleetEmpty: document.getElementById("fleetEmpty"),
+    fleetDetailCallsign: document.getElementById("fleetDetailCallsign"),
+    fleetDetailType: document.getElementById("fleetDetailType"),
+    fleetDetailAlt: document.getElementById("fleetDetailAlt"),
+    fleetDetailSpeed: document.getElementById("fleetDetailSpeed"),
+    fleetDetailTrack: document.getElementById("fleetDetailTrack"),
+    fleetDetailSquawk: document.getElementById("fleetDetailSquawk"),
+    fleetDetailDistance: document.getElementById("fleetDetailDistance"),
+    fleetDetailBearing: document.getElementById("fleetDetailBearing"),
+    fleetDetailPosition: document.getElementById("fleetDetailPosition"),
   };
 
   const ctx = dom.canvas.getContext("2d", { alpha: false, desynchronized: true });
@@ -162,6 +179,10 @@
     weatherSignature: "",
     weatherFetchedAt: 0,
     focusedAirport: null,
+    fleetSearch: "",
+    fleetFilter: "all",
+    fleetSortKey: "distance",
+    fleetSortDir: 1,
     targets: [],
     byHex: new Map(),
     focusedHex: null,
@@ -445,6 +466,7 @@
     layoutTargets();
     updateCounts();
     renderContacts();
+    renderFleet();
   }
 
   function updateCounts() {
@@ -531,6 +553,207 @@
     dom.contactList.replaceChildren(fragment);
   }
 
+  function filteredFleetTargets() {
+    const search = state.fleetSearch.trim().toLowerCase();
+    return state.targets.filter((target) => {
+      if (state.fleetFilter === "air" && target.onGround) return false;
+      if (state.fleetFilter === "ground" && !target.onGround) return false;
+      if (state.fleetFilter === "emergency" && target.style.kind !== "emergency") {
+        return false;
+      }
+      if (!search) return true;
+      return (
+        target.labelCallsign.toLowerCase().includes(search) ||
+        (target.type || "").toLowerCase().includes(search) ||
+        (target.squawk || "").includes(search) ||
+        target.hex.includes(search)
+      );
+    });
+  }
+
+  function sortedFleetTargets(targets) {
+    const key = state.fleetSortKey;
+    const direction = state.fleetSortDir;
+    const value = (target) => {
+      switch (key) {
+        case "callsign":
+          return target.labelCallsign;
+        case "type":
+          return target.type || "";
+        case "altitude":
+          return target.altitude === null ? -1 : target.altitude;
+        case "speed":
+          return target.speed === null ? -1 : target.speed;
+        case "squawk":
+          return target.squawk || "";
+        case "distance":
+        default:
+          return target.distance;
+      }
+    };
+
+    return targets.slice().sort((left, right) => {
+      const a = value(left);
+      const b = value(right);
+      if (typeof a === "string" || typeof b === "string") {
+        return String(a).localeCompare(String(b)) * direction;
+      }
+      return (a - b) * direction;
+    });
+  }
+
+  function renderFleetDetail() {
+    if (!isDesktopMode || !dom.fleetDetailCallsign) {
+      return;
+    }
+    const target = state.focusedHex
+      ? state.byHex.get(state.focusedHex)
+      : null;
+
+    setText(dom.fleetDetailCallsign, target ? target.labelCallsign : "—");
+    setText(dom.fleetDetailType, target ? target.type || "—" : "—");
+    setText(dom.fleetDetailAlt, target ? target.altLabel : "—");
+    setText(dom.fleetDetailSpeed, target ? target.speedLabel : "—");
+    setText(
+      dom.fleetDetailTrack,
+      target && target.track !== null ? `${Math.round(target.track)}°` : "—",
+    );
+    setText(dom.fleetDetailSquawk, target ? target.squawk || "—" : "—");
+    setText(
+      dom.fleetDetailDistance,
+      target ? `${target.distance.toFixed(1)} NM` : "—",
+    );
+    setText(
+      dom.fleetDetailBearing,
+      target ? `${Math.round(target.bearing)}°` : "—",
+    );
+    setText(
+      dom.fleetDetailPosition,
+      target
+        ? `${target.lat.toFixed(5)}, ${target.lon.toFixed(5)}`
+        : "—",
+    );
+  }
+
+  function renderFleet() {
+    if (!isDesktopMode || !dom.fleetRows) {
+      return;
+    }
+
+    const filtered = filteredFleetTargets();
+    const sorted = sortedFleetTargets(filtered);
+    setText(
+      dom.fleetCount,
+      `${pad2(filtered.length)}/${pad2(state.targets.length)}`,
+    );
+
+    for (const header of document.querySelectorAll("[data-fleet-sort]")) {
+      const active = header.dataset.fleetSort === state.fleetSortKey;
+      header.dataset.active = String(active);
+      header.dataset.dir = active && state.fleetSortDir < 0 ? "asc" : "desc";
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const target of sorted) {
+      const row = document.createElement("tr");
+      row.dataset.hex = target.hex;
+      row.tabIndex = 0;
+      row.setAttribute(
+        "aria-selected",
+        String(target.hex === state.focusedHex),
+      );
+      if (target.hex === state.focusedHex) {
+        row.classList.add("is-selected");
+      }
+      if (target.style.kind === "emergency") {
+        row.classList.add("is-emergency");
+      } else if (target.style.kind === "military") {
+        row.classList.add("is-military");
+      }
+
+      const values = [
+        target.labelCallsign,
+        target.type || "—",
+        target.altLabel,
+        target.speedLabel,
+        target.squawk || "—",
+        target.distance.toFixed(1),
+      ];
+      for (const text of values) {
+        const cell = document.createElement("td");
+        cell.textContent = text;
+        row.appendChild(cell);
+      }
+
+      const select = () => setFocusedTarget(target.hex);
+      row.addEventListener("click", select);
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          select();
+        }
+      });
+      fragment.appendChild(row);
+    }
+
+    dom.fleetRows.replaceChildren(fragment);
+    dom.fleetEmpty.classList.toggle("is-visible", sorted.length === 0);
+    renderFleetDetail();
+  }
+
+  function exportFleetCsv() {
+    const rows = sortedFleetTargets(filteredFleetTargets());
+    if (!rows.length) {
+      return;
+    }
+    const header = [
+      "hex",
+      "callsign",
+      "type",
+      "alt_baro_ft",
+      "ground_speed_kt",
+      "track_deg",
+      "squawk",
+      "distance_nm",
+      "bearing_deg",
+      "lat",
+      "lon",
+      "on_ground",
+    ];
+    const lines = [header.join(",")];
+    for (const target of rows) {
+      lines.push(
+        [
+          target.hex,
+          target.labelCallsign,
+          target.type || "",
+          target.altitude ?? "",
+          target.speed ?? "",
+          target.track ?? "",
+          target.squawk || "",
+          target.distance.toFixed(3),
+          target.bearing.toFixed(1),
+          target.lat,
+          target.lon,
+          target.onGround ? "1" : "0",
+        ]
+          .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+          .join(","),
+      );
+    }
+
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const now = new Date();
+    anchor.href = url;
+    anchor.download = `radardesk-fleet-${now.toISOString().slice(0, 19).replace(/:/g, "-")}Z.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   function setFocusedTarget(hex) {
     state.focusedHex = hex || null;
     if (state.focusedHex) {
@@ -542,6 +765,9 @@
     }
     if (view.ready) {
       layoutTargets();
+    }
+    if (isDesktopMode) {
+      renderFleet();
     }
   }
 
@@ -2353,6 +2579,31 @@
       showWeatherCard(state.nearestAirport);
     }
   });
+
+  if (isDesktopMode) {
+    dom.fleetSearch.addEventListener("input", () => {
+      state.fleetSearch = dom.fleetSearch.value;
+      renderFleet();
+    });
+    dom.fleetFilter.addEventListener("change", () => {
+      state.fleetFilter = dom.fleetFilter.value;
+      renderFleet();
+    });
+    dom.fleetExport.addEventListener("click", exportFleetCsv);
+    for (const header of document.querySelectorAll("[data-fleet-sort]")) {
+      header.addEventListener("click", () => {
+        const key = header.dataset.fleetSort;
+        if (state.fleetSortKey === key) {
+          state.fleetSortDir *= -1;
+        } else {
+          state.fleetSortKey = key;
+          state.fleetSortDir = key === "altitude" || key === "speed" ? -1 : 1;
+        }
+        renderFleet();
+      });
+    }
+    renderFleet();
+  }
 
   /* ========================================================================
      API / polling
