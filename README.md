@@ -398,43 +398,11 @@ Endpoint public compact, prévu pour un widget **Homepage** (gethomepage.dev) ou
 tout autre dashboard. Il ne déclenche pas d'appel upstream supplémentaire : il
 utilise le cache radar et les statistiques SQLite déjà présentes.
 
-Champs principaux :
-
-- `status`, `online`, `source`, `fallback_used`, `cache_age_s` ;
-- `aircraft`, `airborne`, `ground`, `emergency` ;
-- `unique_today`, `peak_today`, `contacts_today`, `samples_today`,
-  `average_today` ;
-- `range_nm`, `center_lat`, `center_lon`, `last_update`, `generated_at`.
-
-Exemple de configuration Homepage :
-
-```yaml
-- RadarDesk:
-    icon: mdi-radar
-    href: http://<hote>:8083/
-    widget:
-      type: customapi
-      url: http://<hote>:8083/api/widgets/homepage?range_nm=50
-      refreshInterval: 10000
-      mappings:
-        - field: aircraft
-          label: Avions
-        - field: airborne
-          label: En vol
-        - field: ground
-          label: Au sol
-        - field: unique_today
-          label: Uniques jour
-        - field: peak_today
-          label: Pic
-        - field: source
-          label: Source
-        - field: last_update
-          label: MAJ
-```
-
 L'alias `GET /api/public/summary` renvoie le même JSON. Aucun token InfluxDB
 ni secret n'est exposé.
+
+Voir la section **Intégration Homepage** pour la configuration complète, les
+mappings et le dépannage.
 
 ### `POST /internal/stats/reset`
 
@@ -541,6 +509,239 @@ Puis :
 ```bash
 docker compose up -d --force-recreate backend admin
 ```
+
+## Intégration Homepage (gethomepage.dev)
+
+RadarDesk expose une API JSON compacte utilisable directement dans le widget
+**Custom API** de [Homepage](https://gethomepage.dev/), souvent appelé
+« homepage.io ».
+
+### Endpoint
+
+```text
+GET /api/widgets/homepage?range_nm=50
+```
+
+Alias :
+
+```text
+GET /api/public/summary
+```
+
+Utiliser de préférence le service desktop :
+
+```text
+http://<hote>:8083/api/widgets/homepage?range_nm=50
+```
+
+Il est aussi accessible via le frontend mobile :
+
+```text
+http://<hote>:8081/api/widgets/homepage?range_nm=50
+```
+
+L'endpoint est public, sans authentification, et ne nécessite aucun token.
+Ne pas utiliser l'admin sur `8082` : il est protégé par Basic Auth et ne sert
+pas les widgets.
+
+### Fonctionnement
+
+- `range_nm` est optionnel ; sans valeur, la portée par défaut configurée est
+  utilisée.
+- Les compteurs sont calculés pour la portée demandée (les portées standard
+  sont privilégiées : 5, 10, 25, 50, 75, 100, 125, 150…).
+- Aucun appel ADS-B supplémentaire n'est déclenché.
+- Les valeurs SQLite peuvent avoir jusqu'à `stats_sample_seconds` de retard
+  (30 s par défaut).
+- `online` vaut `false` si le cache radar est absent ou trop ancien ;
+  `status` vaut alors `starting` ou `degraded`.
+
+### Exemple de réponse
+
+```json
+{
+  "version": 1,
+  "status": "ok",
+  "online": true,
+  "source": "adsb.lol",
+  "fallback_used": true,
+  "cache_age_s": 1.2,
+  "last_update": "2026-11-07T21:12:49Z",
+  "center_lat": 46.8432,
+  "center_lon": 6.91506,
+  "range_nm": 50,
+  "aircraft": 18,
+  "airborne": 17,
+  "ground": 1,
+  "emergency": 0,
+  "stats_enabled": true,
+  "unique_today": 63,
+  "peak_today": 26,
+  "contacts_today": 1102,
+  "samples_today": 50,
+  "average_today": 22.04,
+  "last_sample_at": "2026-11-07T21:12:49Z",
+  "influx_enabled": false
+}
+```
+
+### Champs disponibles
+
+| Champ | Type | Description |
+| --- | --- | --- |
+| `status` | texte | `ok`, `degraded` ou `starting` |
+| `online` | booléen | Cache radar considéré comme valide |
+| `source` | texte | Source ADS-B réellement utilisée |
+| `fallback_used` | booléen | Source de secours utilisée |
+| `cache_age_s` | nombre | Âge du cache radar en secondes |
+| `last_update` | texte ISO | Dernière récupération ADS-B |
+| `center_lat`, `center_lon` | nombres | Centre de l'antenne |
+| `range_nm` | nombre | Portée effective du comptage |
+| `aircraft` | nombre | Avions actuellement dans la zone |
+| `airborne` | nombre | Avions en vol |
+| `ground` | nombre | Avions au sol |
+| `emergency` | nombre | Squawks 7500/7600/7700 |
+| `unique_today` | nombre | Avions uniques vus aujourd'hui |
+| `peak_today` | nombre | Pic simultané du jour |
+| `contacts_today` | nombre | Contacts cumulés |
+| `samples_today` | nombre | Nombre de relevés SQLite |
+| `average_today` | nombre | Moyenne de contacts par relevé |
+| `last_sample_at` | texte ISO | Dernier échantillon SQLite |
+| `stats_enabled` | booléen | Collecte SQLite active |
+| `influx_enabled` | booléen | Export InfluxDB activé |
+| `generated_at` | texte ISO | Génération de la réponse |
+
+### Configuration Homepage
+
+Exemple de `services.yaml` :
+
+```yaml
+- Surveillance aérienne:
+    - RadarDesk:
+        icon: mdi-radar
+        href: http://<hote>:8083/
+        description: Récepteur ADS-B local
+        widget:
+          type: customapi
+          url: http://<hote>:8083/api/widgets/homepage?range_nm=50
+          refreshInterval: 10000 # ms
+          mappings:
+            - field: aircraft
+              label: Avions
+              format: number
+            - field: airborne
+              label: En vol
+              format: number
+            - field: ground
+              label: Au sol
+              format: number
+            - field: unique_today
+              label: Uniques jour
+              format: number
+            - field: peak_today
+              label: Pic
+              format: number
+            - field: status
+              label: État
+              format: text
+              remap:
+                - value: ok
+                  to: En ligne
+                - value: degraded
+                  to: Différé
+                - any: true
+                  to: Démarrage
+            - field: source
+              label: Source
+              format: text
+            - field: cache_age_s
+              label: Cache
+              format: number
+              suffix: " s"
+            - field: last_update
+              label: MAJ
+              format: relativeDate
+              locale: fr
+              style: short
+              numeric: auto
+```
+
+Variante compacte en liste :
+
+```yaml
+- RadarDesk:
+    icon: mdi-radar
+    href: http://<hote>:8083/
+    widget:
+      type: customapi
+      url: http://<hote>:8083/api/widgets/homepage?range_nm=50
+      refreshInterval: 10000
+      display: list
+      mappings:
+        - field: aircraft
+          label: Avions
+          format: number
+          additionalField:
+            field: source
+            format: text
+        - field: unique_today
+          label: Uniques jour
+          format: number
+        - field: peak_today
+          label: Pic
+          format: number
+        - field: status
+          label: État
+          format: text
+```
+
+Les formats `number`, `text`, `relativeDate`, `remap`, `suffix` et
+`additionalField` sont ceux du widget Custom API de Homepage.
+
+### Réseau Docker
+
+Le conteneur Homepage ne doit pas utiliser `localhost` : `localhost` désigne le
+conteneur Homepage lui-même. Utiliser :
+
+- l'adresse IP LAN de la machine Docker : `http://192.168.1.42:8083/...` ;
+- ou, si Homepage est sur le même réseau Docker que RadarDesk,
+  `http://desktop/api/widgets/homepage?range_nm=50` ;
+- sur Docker Desktop, `http://host.docker.internal:8083/...` fonctionne
+  généralement ;
+- sur Docker Linux, pour utiliser `host.docker.internal`, ajouter au service
+  Homepage :
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+### Vérification et dépannage
+
+Depuis la machine hôte :
+
+```bash
+curl -s http://127.0.0.1:8083/api/widgets/homepage | python3 -m json.tool
+```
+
+Ou depuis le conteneur Homepage, si `curl` y est disponible :
+
+```bash
+docker exec -it homepage \
+  curl -fsS http://host.docker.internal:8083/api/widgets/homepage
+```
+
+Points de contrôle :
+
+- `status: ok` et `online: true` : flux radar valide ;
+- `status: degraded` : cache radar ancien, le widget continue d'afficher la
+  dernière valeur ;
+- `unique_today` ou `peak_today` à `0` : vérifier que la collecte SQLite est
+  active dans l'admin et qu'un échantillon a déjà été enregistré ;
+- `range_nm` : utiliser une portée standard pour éviter toute conversion vers
+  la portée statistique supérieure ;
+- si les champs ne s'affichent pas dans Homepage, vérifier que le `field`
+  correspond exactement au nom JSON et que le widget est de type `customapi`.
 
 ## Chargement dans Morph Browser
 
