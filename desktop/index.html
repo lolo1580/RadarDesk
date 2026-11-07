@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="desktop">
+  <div class="desktop" data-view="map">
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
@@ -22,15 +22,32 @@
       </div>
 
       <div class="toolbar">
+        <div class="view-switch" role="group" aria-label="Vue principale">
+          <button class="view-tab is-active" id="mapViewBtn" type="button"
+                  aria-pressed="true" aria-controls="mapView" aria-label="Carte" title="Carte">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3zM9 3v15M15 6v15" />
+            </svg>
+            <span>CARTE</span>
+          </button>
+          <button class="view-tab" id="statsViewBtn" type="button"
+                  aria-pressed="false" aria-controls="statsPage" aria-label="Statistiques" title="Statistiques">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+            </svg>
+            <span>STATS</span>
+          </button>
+        </div>
+
         <label class="field field--range">
           <span>PORTÉE</span>
           <select id="rangeSelect" aria-label="Portée d'affichage"></select>
         </label>
-        <label class="toggle">
+        <label class="toggle map-only">
           <input id="weatherToggle" type="checkbox" checked>
           <span>MÉTÉO</span>
         </label>
-        <label class="toggle">
+        <label class="toggle map-only">
           <input id="runwayToggle" type="checkbox" checked>
           <span>PISTES</span>
         </label>
@@ -61,7 +78,7 @@
       </div>
     </header>
 
-    <main class="workspace">
+    <main class="workspace" id="mapView">
       <section class="map-panel" aria-label="Carte de suivi ADS-B">
         <div id="map"></div>
         <div class="map-hud map-hud--left">
@@ -84,144 +101,159 @@
         <header class="ops-head">
           <div>
             <p class="eyebrow">OPERATIONS</p>
-            <h2 id="opsTitle">STATISTIQUES</h2>
+            <h2>FLOTTE ADS-B</h2>
           </div>
           <span class="ops-count" id="opsCount">00</span>
         </header>
 
-        <div class="ops-tabs" role="tablist" aria-label="Vues opérationnelles">
-          <button class="ops-tab is-active" id="statsTab" type="button" role="tab"
-                  aria-selected="true" aria-controls="statsView">STATISTIQUES</button>
-          <button class="ops-tab" id="fleetTab" type="button" role="tab"
-                  aria-selected="false" aria-controls="fleetView">FLOTTE</button>
+        <div class="ops-tools">
+          <input id="searchInput" type="search" placeholder="Indicatif, type, hex, squawk…"
+                 aria-label="Rechercher une cible" autocomplete="off">
+          <select id="filterSelect" aria-label="Filtrer les cibles">
+            <option value="all">Tous</option>
+            <option value="air">En vol</option>
+            <option value="ground">Au sol</option>
+            <option value="emergency">Urgences</option>
+          </select>
+          <button id="exportBtn" type="button" title="Exporter en CSV">CSV</button>
         </div>
 
-        <section class="stats-view" id="statsView" role="tabpanel" aria-labelledby="statsTab" tabindex="0">
-          <div class="stat-cards">
-            <article class="stat-card stat-card--wide">
-              <span>AVIONS DANS LA ZONE</span>
-              <strong id="statCurrent">00</strong>
-              <small id="statBreakdown">0 en vol · 0 au sol</small>
-            </article>
-            <article class="stat-card">
-              <span>UNIQUES AUJOURD'HUI</span>
-              <strong id="statUnique">0</strong>
-              <small id="statSince">depuis —</small>
-            </article>
-            <article class="stat-card">
-              <span>PIC SIMULTANÉ</span>
-              <strong id="statPeak">00</strong>
-              <small>contacts simultanés</small>
-            </article>
-            <article class="stat-card">
-              <span>CONTACTS CUMULÉS</span>
-              <strong id="statObservations">0</strong>
-              <small id="statPolls">0 relevé</small>
-            </article>
-            <article class="stat-card">
-              <span>MOYENNE / RELEVÉ</span>
-              <strong id="statAverage">0.0</strong>
-              <small>contacts simultanés</small>
-            </article>
-          </div>
+        <div class="table-wrap">
+          <table class="aircraft-table">
+            <thead>
+              <tr>
+                <th data-sort="callsign">INDICATIF</th>
+                <th data-sort="type">TYPE</th>
+                <th data-sort="altitude">ALT.</th>
+                <th data-sort="speed">GS</th>
+                <th data-sort="squawk">SQK</th>
+                <th data-sort="distance">DIST.</th>
+              </tr>
+            </thead>
+            <tbody id="aircraftRows"></tbody>
+          </table>
+          <p class="empty" id="emptyState">AUCUNE CIBLE DANS LA ZONE</p>
+        </div>
 
-          <div class="stat-panel stat-panel--antenna">
-            <header><span>ANTENNE RX</span><span id="antennaMode">—</span></header>
-            <dl class="antenna-grid">
-              <dt>Centre</dt><dd id="antennaCenter">—</dd>
-              <dt>Portée</dt><dd><span id="antennaRange">—</span> NM</dd>
-              <dt>Portée max</dt><dd><span id="antennaMax">—</span> NM</dd>
-              <dt>Surface</dt><dd id="antennaArea">—</dd>
-              <dt>Source</dt><dd id="antennaSource">—</dd>
-            </dl>
-            <p class="stats-note" id="statsNote">Chargement des statistiques serveur…</p>
+        <section class="selection" aria-live="polite">
+          <p class="section-label">CIBLE SÉLECTIONNÉE</p>
+          <div class="selection-head">
+            <strong id="selectedCallsign">—</strong>
+            <span id="selectedType">—</span>
           </div>
-
-          <div class="stat-panel">
-            <header>
-              <span>ACTIVITÉ 60 MIN</span>
-              <strong id="chartSummary">—</strong>
-            </header>
-            <div class="chart-wrap">
-              <svg id="activityChart" viewBox="0 0 240 64" preserveAspectRatio="none"
-                   role="img" aria-label="Activité des 60 dernières minutes"></svg>
-            </div>
-          </div>
-
-          <div class="stat-panel">
-            <header><span>PAR DISTANCE</span><span>NM</span></header>
-            <div class="bar-list" id="distanceBars"></div>
-          </div>
-
-          <div class="stat-panel">
-            <header><span>PAR ALTITUDE</span><span>FT</span></header>
-            <div class="bar-list" id="altitudeBars"></div>
-          </div>
-
-          <div class="stat-panel">
-            <header><span>TYPES ACTUELS</span><span id="typesTotal">0</span></header>
-            <div class="bar-list" id="typeBars"></div>
-          </div>
-
-          <div class="stat-panel">
-            <header><span>7 DERNIERS JOURS</span><span>UNIQUES</span></header>
-            <div class="bar-list" id="dailyBars"></div>
+          <div class="selection-grid">
+            <div><span>ALTITUDE</span><strong id="selectedAlt">—</strong></div>
+            <div><span>VITESSE</span><strong id="selectedSpeed">—</strong></div>
+            <div><span>CAP</span><strong id="selectedTrack">—</strong></div>
+            <div><span>SQUAWK</span><strong id="selectedSquawk">—</strong></div>
+            <div><span>DISTANCE</span><strong id="selectedDistance">—</strong></div>
+            <div><span>AZIMUT</span><strong id="selectedBearing">—</strong></div>
+            <div class="selection-wide"><span>POSITION</span><strong id="selectedPosition">—</strong></div>
           </div>
         </section>
-
-        <div class="fleet-view" id="fleetView" role="tabpanel" aria-labelledby="fleetTab" hidden>
-          <div class="ops-tools">
-            <input id="searchInput" type="search" placeholder="Indicatif, type, hex, squawk…"
-                   aria-label="Rechercher une cible" autocomplete="off">
-            <select id="filterSelect" aria-label="Filtrer les cibles">
-              <option value="all">Tous</option>
-              <option value="air">En vol</option>
-              <option value="ground">Au sol</option>
-              <option value="emergency">Urgences</option>
-            </select>
-            <button id="exportBtn" type="button" title="Exporter en CSV">CSV</button>
-          </div>
-
-          <div class="table-wrap">
-            <table class="aircraft-table">
-              <thead>
-                <tr>
-                  <th data-sort="callsign">INDICATIF</th>
-                  <th data-sort="type">TYPE</th>
-                  <th data-sort="altitude">ALT.</th>
-                  <th data-sort="speed">GS</th>
-                  <th data-sort="squawk">SQK</th>
-                  <th data-sort="distance">DIST.</th>
-                </tr>
-              </thead>
-              <tbody id="aircraftRows"></tbody>
-            </table>
-            <p class="empty" id="emptyState">AUCUNE CIBLE DANS LA ZONE</p>
-          </div>
-
-          <section class="selection" aria-live="polite">
-            <p class="section-label">CIBLE SÉLECTIONNÉE</p>
-            <div class="selection-head">
-              <strong id="selectedCallsign">—</strong>
-              <span id="selectedType">—</span>
-            </div>
-            <div class="selection-grid">
-              <div><span>ALTITUDE</span><strong id="selectedAlt">—</strong></div>
-              <div><span>VITESSE</span><strong id="selectedSpeed">—</strong></div>
-              <div><span>CAP</span><strong id="selectedTrack">—</strong></div>
-              <div><span>SQUAWK</span><strong id="selectedSquawk">—</strong></div>
-              <div><span>DISTANCE</span><strong id="selectedDistance">—</strong></div>
-              <div><span>AZIMUT</span><strong id="selectedBearing">—</strong></div>
-              <div class="selection-wide"><span>POSITION</span><strong id="selectedPosition">—</strong></div>
-            </div>
-          </section>
-        </div>
 
         <footer class="ops-foot">
           <span>1090 MHZ / ADS-B</span>
           <span id="latencyLabel">—</span>
         </footer>
       </aside>
+    </main>
+
+    <main class="stats-page" id="statsPage" tabindex="0" hidden>
+      <header class="stats-page-head">
+        <div>
+          <p class="eyebrow">ANALYSE</p>
+          <h2>Statistiques de réception</h2>
+        </div>
+        <p class="stats-page-sub">SQLite · historique 7 jours · compteurs serveur</p>
+      </header>
+
+      <section class="stats-view stats-view--page" id="statsView">
+        <div class="stat-cards">
+          <article class="stat-card stat-card--wide">
+            <span>AVIONS DANS LA ZONE</span>
+            <strong id="statCurrent">00</strong>
+            <small id="statBreakdown">0 en vol · 0 au sol</small>
+          </article>
+          <article class="stat-card">
+            <span>UNIQUES AUJOURD'HUI</span>
+            <strong id="statUnique">0</strong>
+            <small id="statSince">depuis —</small>
+          </article>
+          <article class="stat-card">
+            <span>PIC SIMULTANÉ</span>
+            <strong id="statPeak">00</strong>
+            <small>contacts simultanés</small>
+          </article>
+          <article class="stat-card">
+            <span>CONTACTS CUMULÉS</span>
+            <strong id="statObservations">0</strong>
+            <small id="statPolls">0 relevé</small>
+          </article>
+          <article class="stat-card">
+            <span>MOYENNE / RELEVÉ</span>
+            <strong id="statAverage">0.0</strong>
+            <small>contacts simultanés</small>
+          </article>
+        </div>
+
+        <div class="stat-panel stat-panel--chart">
+          <header>
+            <span>ACTIVITÉ 60 MIN</span>
+            <strong id="chartSummary">—</strong>
+          </header>
+          <div class="chart-wrap">
+            <svg id="activityChart" viewBox="0 0 240 64" preserveAspectRatio="none"
+                 role="img" aria-label="Activité des 60 dernières minutes"></svg>
+          </div>
+        </div>
+
+        <div class="stat-panel stat-panel--daily">
+          <header><span>7 DERNIERS JOURS</span><span>UNIQUES</span></header>
+          <div class="bar-list" id="dailyBars"></div>
+        </div>
+
+        <div class="stat-panel stat-panel--hourly">
+          <header>
+            <span>ACTIVITÉ PAR HEURE</span>
+            <strong id="hourlySummary">—</strong>
+          </header>
+          <div class="chart-wrap">
+            <svg id="hourlyChart" viewBox="0 0 240 64" preserveAspectRatio="none"
+                 role="img" aria-label="Activité horaire du jour"></svg>
+          </div>
+          <div class="chart-axis" aria-hidden="true">
+            <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+          </div>
+        </div>
+
+        <div class="stat-panel stat-panel--distance">
+          <header><span>PAR DISTANCE</span><span>NM</span></header>
+          <div class="bar-list" id="distanceBars"></div>
+        </div>
+
+        <div class="stat-panel stat-panel--altitude">
+          <header><span>PAR ALTITUDE</span><span>FT</span></header>
+          <div class="bar-list" id="altitudeBars"></div>
+        </div>
+
+        <div class="stat-panel stat-panel--types">
+          <header><span>TYPES ACTUELS</span><span id="typesTotal">0</span></header>
+          <div class="bar-list" id="typeBars"></div>
+        </div>
+
+        <div class="stat-panel stat-panel--antenna">
+          <header><span>ANTENNE RX</span><span id="antennaMode">—</span></header>
+          <dl class="antenna-grid">
+            <dt>Centre</dt><dd id="antennaCenter">—</dd>
+            <dt>Portée</dt><dd><span id="antennaRange">—</span> NM</dd>
+            <dt>Portée max</dt><dd><span id="antennaMax">—</span> NM</dd>
+            <dt>Surface</dt><dd id="antennaArea">—</dd>
+            <dt>Source</dt><dd id="antennaSource">—</dd>
+          </dl>
+          <p class="stats-note" id="statsNote">Chargement des statistiques serveur…</p>
+        </div>
+      </section>
     </main>
   </div>
 

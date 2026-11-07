@@ -62,12 +62,11 @@
     mapRange: document.getElementById("mapRange"),
     sourceName: document.getElementById("sourceName"),
     lastUpdate: document.getElementById("lastUpdate"),
-    opsTitle: document.getElementById("opsTitle"),
     opsCount: document.getElementById("opsCount"),
-    statsTab: document.getElementById("statsTab"),
-    fleetTab: document.getElementById("fleetTab"),
-    statsView: document.getElementById("statsView"),
-    fleetView: document.getElementById("fleetView"),
+    mapView: document.getElementById("mapView"),
+    statsPage: document.getElementById("statsPage"),
+    mapViewBtn: document.getElementById("mapViewBtn"),
+    statsViewBtn: document.getElementById("statsViewBtn"),
     statCurrent: document.getElementById("statCurrent"),
     statBreakdown: document.getElementById("statBreakdown"),
     statUnique: document.getElementById("statUnique"),
@@ -78,6 +77,8 @@
     statAverage: document.getElementById("statAverage"),
     chartSummary: document.getElementById("chartSummary"),
     activityChart: document.getElementById("activityChart"),
+    hourlyChart: document.getElementById("hourlyChart"),
+    hourlySummary: document.getElementById("hourlySummary"),
     distanceBars: document.getElementById("distanceBars"),
     altitudeBars: document.getElementById("altitudeBars"),
     typeBars: document.getElementById("typeBars"),
@@ -116,7 +117,7 @@
     aircraft: [],
     byHex: new Map(),
     selectedHex: null,
-    panelTab: "stats",
+    mainView: "map",
     filteredCount: 0,
     statsSummary: null,
     statsFetchedAt: 0,
@@ -1045,6 +1046,77 @@
     );
   }
 
+  function ensureHourlyChart() {
+    const chart = dom.hourlyChart;
+    if (!chart || chart.getAttribute("data-ready") === "1") return;
+    const ns = "http://www.w3.org/2000/svg";
+    const fragment = document.createDocumentFragment();
+    for (const y of [16, 32, 48]) {
+      const line = document.createElementNS(ns, "line");
+      line.setAttribute("class", "chart-grid");
+      line.setAttribute("x1", "0");
+      line.setAttribute("x2", "240");
+      line.setAttribute("y1", String(y));
+      line.setAttribute("y2", String(y));
+      fragment.appendChild(line);
+    }
+    for (let index = 0; index < 24; index += 1) {
+      const bar = document.createElementNS(ns, "rect");
+      bar.setAttribute("class", "chart-bar");
+      bar.setAttribute("x", String(index * 10 + 1));
+      bar.setAttribute("y", "64");
+      bar.setAttribute("width", "8");
+      bar.setAttribute("height", "0");
+      fragment.appendChild(bar);
+    }
+    chart.replaceChildren(fragment);
+    chart.setAttribute("data-ready", "1");
+  }
+
+  function renderHourlyChart() {
+    ensureHourlyChart();
+    const chart = dom.hourlyChart;
+    if (!chart) return;
+    const bars = chart.querySelectorAll(".chart-bar");
+    const summary = state.statsSummary;
+    const hours =
+      summary?.enabled && Array.isArray(summary.hours) ? summary.hours : [];
+    const maximum = Math.max(
+      1,
+      ...hours.map((hour) => (Number(hour.samples) > 0 ? Number(hour.average) || 0 : 0)),
+    );
+    const currentHour = new Date().getUTCHours();
+    let peak = 0;
+    let activeAverage = 0;
+    let activeHours = 0;
+
+    bars.forEach((bar, index) => {
+      const hour = hours[index];
+      const samples = Number(hour?.samples || 0);
+      const average = samples > 0 ? Number(hour.average) || 0 : 0;
+      const height = average > 0 ? Math.max(1, (average / maximum) * 58) : 0;
+      bar.setAttribute("y", String(64 - height));
+      bar.setAttribute("height", String(height));
+      bar.classList.toggle("is-empty", height === 0);
+      bar.classList.toggle("is-current", index === currentHour);
+      if (samples > 0) {
+        peak = Math.max(peak, Number(hour.peak) || 0);
+        activeAverage += average;
+        activeHours += 1;
+      }
+    });
+
+    const average = activeHours > 0 ? activeAverage / activeHours : 0;
+    setText(
+      dom.hourlySummary,
+      peak > 0 ? `PIC ${peak} · MOY ${average.toFixed(1)}` : "—",
+    );
+    chart.setAttribute(
+      "aria-label",
+      `Activité horaire du jour, pic ${peak}, moyenne ${average.toFixed(1)}`,
+    );
+  }
+
   function renderBarRows(container, rows) {
     if (!container) return;
     if (!rows.length) {
@@ -1212,6 +1284,7 @@
     );
 
     renderActivityChart();
+    renderHourlyChart();
     renderBarRows(dom.distanceBars, distanceBandRows());
     renderBarRows(dom.altitudeBars, altitudeBandRows());
     renderBarRows(dom.typeBars, typeBandRows());
@@ -1232,27 +1305,31 @@
 
   function updateOpsCount() {
     if (!dom.opsCount) return;
-    const total = state.aircraft.length;
     setText(
       dom.opsCount,
-      state.panelTab === "fleet"
-        ? `${pad2(state.filteredCount)}/${pad2(total)}`
-        : pad2(total),
+      `${pad2(state.filteredCount)}/${pad2(state.aircraft.length)}`,
     );
   }
 
-  function setPanelTab(tab) {
-    state.panelTab = tab === "fleet" ? "fleet" : "stats";
-    const statsActive = state.panelTab === "stats";
-    dom.statsTab.classList.toggle("is-active", statsActive);
-    dom.fleetTab.classList.toggle("is-active", !statsActive);
-    dom.statsTab.setAttribute("aria-selected", String(statsActive));
-    dom.fleetTab.setAttribute("aria-selected", String(!statsActive));
-    dom.statsView.hidden = !statsActive;
-    dom.fleetView.hidden = statsActive;
-    setText(dom.opsTitle, statsActive ? "STATISTIQUES" : "FLOTTE ADS-B");
-    if (statsActive) renderStats();
-    else updateOpsCount();
+  function setMainView(view) {
+    const statsActive = view === "stats";
+    state.mainView = statsActive ? "stats" : "map";
+    dom.mapView.hidden = statsActive;
+    dom.statsPage.hidden = !statsActive;
+    dom.mapViewBtn.classList.toggle("is-active", !statsActive);
+    dom.statsViewBtn.classList.toggle("is-active", statsActive);
+    dom.mapViewBtn.setAttribute("aria-pressed", String(!statsActive));
+    dom.statsViewBtn.setAttribute("aria-pressed", String(statsActive));
+    document.querySelector(".desktop").dataset.view = state.mainView;
+    if (statsActive) {
+      renderStats();
+      loadServerStats();
+    } else {
+      window.setTimeout(() => {
+        state.map?.invalidateSize();
+        fitRange();
+      }, 40);
+    }
   }
 
   async function loadServerStats() {
@@ -1285,16 +1362,15 @@
 
   function initStatsView() {
     ensureActivityChart();
-    dom.statsTab.addEventListener("click", () => setPanelTab("stats"));
-    dom.fleetTab.addEventListener("click", () => setPanelTab("fleet"));
-    setPanelTab("stats");
+    dom.mapViewBtn.addEventListener("click", () => setMainView("map"));
+    dom.statsViewBtn.addEventListener("click", () => setMainView("stats"));
+    setMainView("map");
     renderStats();
     loadServerStats();
   }
 
   function selectAircraft(hex, pan = false) {
     state.selectedHex = hex;
-    if (hex) setPanelTab("fleet");
     renderAircraftMarkers();
     renderTable();
     renderSelection();

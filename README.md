@@ -441,18 +441,18 @@ Le service `desktop` est une interface dédiée sur un troisième port TCP. Elle
 remplace volontairement le scope PPI par une carte standard, sans balayage
 radar, rémanence phosphore ni effets CRT :
 
-- vue `STATISTIQUES` par défaut, centrée sur l'antenne configurée ;
+- vue `STATISTIQUES` dédiée, accessible via le sélecteur `CARTE / STATS` ;
 - comptage temps réel : avions dans la zone, en vol / au sol, urgences ;
 - compteurs du jour : avions uniques, pic simultané, contacts cumulés,
   nombre de relevés et moyenne par relevé ;
-- graphique d'activité sur les 60 dernières minutes ;
+- graphique d'activité sur les 60 dernières minutes et activité horaire ;
 - historique des 7 derniers jours en avions uniques ;
 - répartition des contacts par distance, par altitude et par type d'appareil ;
 - panneau antenne : centre, portée courante, portée max, surface couverte et
   source de données ;
 - statistiques persistées côté serveur en SQLite, séparées par centre d'antenne
   et par portée ;
-- vue `FLOTTE` avec table complète des cibles dans la bulle ;
+- vue `CARTE` avec table complète des cibles dans la bulle et fiche sélection ;
 - recherche par indicatif, type, hex ou squawk ;
 - filtres en vol / au sol / urgences ;
 - tri par indicatif, type, altitude, vitesse, squawk ou distance ;
@@ -469,8 +469,9 @@ radar, rémanence phosphore ni effets CRT :
 Les compteurs sont calculés à partir du flux ADS-B actif, dans la zone
 centre/portée affichée. Le collecteur backend échantillonne l'antenne même
 lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
-du volume Docker `radardesk_stats_data`. Le panneau `ANTENNE RX` rappelle le
-centre, la portée et la source réellement utilisés.
+du volume Docker `radardesk_stats_data`. La vue `STATISTIQUES` regroupe les
+indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions et le
+panneau `ANTENNE RX` ; la vue `CARTE` reste centrée sur la carte et la flotte.
 
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
