@@ -5,8 +5,28 @@
   const RANGE_STEPS = [5, 10, 25, 50, 75, 100, 125, 150, 200, 250];
   const POLL_MS = 3000;
   const WEATHER_REFRESH_MS = 5 * 60 * 1000;
+  const STATS_STORAGE_KEY = "radardesk.desktop.stats.v1";
+  const STATS_PERSIST_MS = 5000;
   const REDUCED_MOTION =
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+  const DISTANCE_BANDS = [
+    { lower: 0, upper: 5, label: "0–5" },
+    { lower: 5, upper: 10, label: "5–10" },
+    { lower: 10, upper: 25, label: "10–25" },
+    { lower: 25, upper: 50, label: "25–50" },
+    { lower: 50, upper: 100, label: "50–100" },
+    { lower: 100, upper: Infinity, label: "100+" },
+  ];
+  const ALTITUDE_BANDS = [
+    { key: "ground", label: "SOL" },
+    { key: "0-5", label: "0–5k", max: 5000 },
+    { key: "5-10", label: "5–10k", max: 10000 },
+    { key: "10-20", label: "10–20k", max: 20000 },
+    { key: "20-30", label: "20–30k", max: 30000 },
+    { key: "30-40", label: "30–40k", max: 40000 },
+    { key: "40+", label: "40k+", max: Infinity },
+    { key: "unknown", label: "N/C" },
+  ];
   const PLANE_SVG =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-.55 0-1 .45-1 1v6.1L4 13v2l7-2.1v5.3l-2 1.5V21l3-1 3 1v-1.3l-2-1.5v-5.3l7 2.1v-2l-7-3.9V3c0-.55-.45-1-1-1z"/></svg>';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
@@ -43,7 +63,33 @@
     mapRange: document.getElementById("mapRange"),
     sourceName: document.getElementById("sourceName"),
     lastUpdate: document.getElementById("lastUpdate"),
+    opsTitle: document.getElementById("opsTitle"),
     opsCount: document.getElementById("opsCount"),
+    statsTab: document.getElementById("statsTab"),
+    fleetTab: document.getElementById("fleetTab"),
+    statsView: document.getElementById("statsView"),
+    fleetView: document.getElementById("fleetView"),
+    statCurrent: document.getElementById("statCurrent"),
+    statBreakdown: document.getElementById("statBreakdown"),
+    statUnique: document.getElementById("statUnique"),
+    statSince: document.getElementById("statSince"),
+    statPeak: document.getElementById("statPeak"),
+    statObservations: document.getElementById("statObservations"),
+    statPolls: document.getElementById("statPolls"),
+    statAverage: document.getElementById("statAverage"),
+    chartSummary: document.getElementById("chartSummary"),
+    activityChart: document.getElementById("activityChart"),
+    distanceBars: document.getElementById("distanceBars"),
+    altitudeBars: document.getElementById("altitudeBars"),
+    typeBars: document.getElementById("typeBars"),
+    typesTotal: document.getElementById("typesTotal"),
+    antennaMode: document.getElementById("antennaMode"),
+    antennaCenter: document.getElementById("antennaCenter"),
+    antennaRange: document.getElementById("antennaRange"),
+    antennaMax: document.getElementById("antennaMax"),
+    antennaArea: document.getElementById("antennaArea"),
+    antennaSource: document.getElementById("antennaSource"),
+    resetStatsBtn: document.getElementById("resetStatsBtn"),
     searchInput: document.getElementById("searchInput"),
     filterSelect: document.getElementById("filterSelect"),
     exportBtn: document.getElementById("exportBtn"),
@@ -70,6 +116,10 @@
     aircraft: [],
     byHex: new Map(),
     selectedHex: null,
+    panelTab: "stats",
+    filteredCount: 0,
+    stats: null,
+    statsPersistTimer: 0,
     search: "",
     filter: "all",
     sortKey: "distance",
@@ -778,8 +828,8 @@
 
   function renderTable() {
     const list = sortedAircraft(filteredAircraft());
-    const total = state.aircraft.length;
-    setText(dom.opsCount, `${pad2(list.length)}/${pad2(total)}`);
+    state.filteredCount = list.length;
+    updateOpsCount();
 
     for (const header of document.querySelectorAll("[data-sort]")) {
       const active = header.dataset.sort === state.sortKey;
@@ -879,8 +929,445 @@
     );
   }
 
+  /* ========================================================================
+     Statistiques de l'antenne
+     ======================================================================== */
+
+  function localDateKey(date = new Date()) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  }
+
+  function minuteKey(date = new Date()) {
+    return `${localDateKey(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  }
+
+  function formatLocalTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  }
+
+  function emptyStats(date = "", location = "") {
+    return {
+      date,
+      location,
+      unique: new Set(),
+      polls: 0,
+      observations: 0,
+      peak: 0,
+      firstAt: 0,
+      minutes: {},
+      updatedAt: 0,
+    };
+  }
+
+  function loadStoredStats() {
+    try {
+      const raw = window.localStorage.getItem(STATS_STORAGE_KEY);
+      if (!raw) return emptyStats();
+      const data = JSON.parse(raw);
+      if (!data || data.version !== 1) return emptyStats();
+      return {
+        date: typeof data.date === "string" ? data.date : "",
+        location: typeof data.location === "string" ? data.location : "",
+        unique: new Set(
+          Array.isArray(data.unique)
+            ? data.unique.filter((value) => typeof value === "string")
+            : [],
+        ),
+        polls: Number.isFinite(data.polls) ? data.polls : 0,
+        observations: Number.isFinite(data.observations) ? data.observations : 0,
+        peak: Number.isFinite(data.peak) ? data.peak : 0,
+        firstAt: Number.isFinite(data.firstAt) ? data.firstAt : 0,
+        minutes:
+          data.minutes &&
+          typeof data.minutes === "object" &&
+          !Array.isArray(data.minutes)
+            ? data.minutes
+            : {},
+        updatedAt: Number.isFinite(data.updatedAt) ? data.updatedAt : 0,
+      };
+    } catch {
+      return emptyStats();
+    }
+  }
+
+  function statsLocationKey() {
+    return `coords:${state.center.lat.toFixed(2)},${state.center.lon.toFixed(2)}:r${Math.round(state.rangeNm)}`;
+  }
+
+  function syncStatsScope(now = new Date()) {
+    const date = localDateKey(now);
+    const location = statsLocationKey();
+    if (
+      !state.stats ||
+      state.stats.date !== date ||
+      state.stats.location !== location
+    ) {
+      state.stats = emptyStats(date, location);
+    }
+  }
+
+  function persistStats() {
+    if (!state.stats) return;
+    try {
+      window.localStorage.setItem(
+        STATS_STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          date: state.stats.date,
+          location: state.stats.location,
+          unique: [...state.stats.unique],
+          polls: state.stats.polls,
+          observations: state.stats.observations,
+          peak: state.stats.peak,
+          firstAt: state.stats.firstAt,
+          minutes: state.stats.minutes,
+          updatedAt: state.stats.updatedAt,
+        }),
+      );
+    } catch {
+      // Stockage local indisponible ou plein : les stats restent en mémoire.
+    }
+  }
+
+  function scheduleStatsPersist() {
+    if (state.statsPersistTimer) return;
+    state.statsPersistTimer = window.setTimeout(() => {
+      state.statsPersistTimer = 0;
+      persistStats();
+    }, STATS_PERSIST_MS);
+  }
+
+  function recordStats() {
+    const now = new Date();
+    syncStatsScope(now);
+    const stats = state.stats;
+    for (const aircraft of state.aircraft) {
+      stats.unique.add(aircraft.hex);
+    }
+
+    const current = state.aircraft.length;
+    stats.polls += 1;
+    stats.observations += current;
+    stats.peak = Math.max(stats.peak, current);
+    if (!stats.firstAt) stats.firstAt = now.getTime();
+
+    const key = minuteKey(now);
+    let bucket = stats.minutes[key];
+    if (!bucket || typeof bucket !== "object") {
+      bucket = { s: 0, n: 0, p: 0 };
+    }
+    bucket.s = (Number.isFinite(bucket.s) ? bucket.s : 0) + current;
+    bucket.n = (Number.isFinite(bucket.n) ? bucket.n : 0) + 1;
+    bucket.p = Math.max(Number.isFinite(bucket.p) ? bucket.p : 0, current);
+    stats.minutes[key] = bucket;
+    stats.updatedAt = now.getTime();
+
+    scheduleStatsPersist();
+    renderStats();
+  }
+
+  function lastMinuteBuckets() {
+    const now = new Date();
+    const anchor = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      now.getHours(),
+      now.getMinutes(),
+    );
+    const buckets = [];
+    for (let offset = 59; offset >= 0; offset -= 1) {
+      const date = new Date(anchor.getTime() - offset * 60000);
+      const key = minuteKey(date);
+      const bucket = state.stats?.minutes?.[key];
+      const samples =
+        Number.isFinite(bucket?.n) && bucket.n > 0 ? bucket.n : 0;
+      const sum = Number.isFinite(bucket?.s) ? bucket.s : 0;
+      buckets.push({
+        key,
+        samples,
+        average: samples > 0 ? sum / samples : 0,
+        peak: samples > 0 && Number.isFinite(bucket?.p) ? bucket.p : 0,
+      });
+    }
+    return buckets;
+  }
+
+  function ensureActivityChart() {
+    const chart = dom.activityChart;
+    if (!chart || chart.getAttribute("data-ready") === "1") return;
+    const ns = "http://www.w3.org/2000/svg";
+    const fragment = document.createDocumentFragment();
+    for (const y of [16, 32, 48]) {
+      const line = document.createElementNS(ns, "line");
+      line.setAttribute("class", "chart-grid");
+      line.setAttribute("x1", "0");
+      line.setAttribute("x2", "240");
+      line.setAttribute("y1", String(y));
+      line.setAttribute("y2", String(y));
+      fragment.appendChild(line);
+    }
+    for (let index = 0; index < 60; index += 1) {
+      const bar = document.createElementNS(ns, "rect");
+      bar.setAttribute("class", "chart-bar");
+      bar.setAttribute("x", String(index * 4));
+      bar.setAttribute("y", "64");
+      bar.setAttribute("width", "3");
+      bar.setAttribute("height", "0");
+      fragment.appendChild(bar);
+    }
+    chart.replaceChildren(fragment);
+    chart.setAttribute("data-ready", "1");
+  }
+
+  function renderActivityChart() {
+    ensureActivityChart();
+    const chart = dom.activityChart;
+    if (!chart) return;
+    const bars = chart.querySelectorAll(".chart-bar");
+    const buckets = lastMinuteBuckets();
+    const maximum = Math.max(1, ...buckets.map((bucket) => bucket.average));
+    const currentKey = minuteKey();
+    let peak = 0;
+    let activeAverage = 0;
+    let activeMinutes = 0;
+
+    buckets.forEach((bucket, index) => {
+      const bar = bars[index];
+      if (!bar) return;
+      const height =
+        bucket.average > 0
+          ? Math.max(1, (bucket.average / maximum) * 58)
+          : 0;
+      bar.setAttribute("y", String(64 - height));
+      bar.setAttribute("height", String(height));
+      bar.classList.toggle("is-empty", height === 0);
+      bar.classList.toggle("is-current", bucket.key === currentKey);
+      peak = Math.max(peak, bucket.peak);
+      if (bucket.samples > 0) {
+        activeAverage += bucket.average;
+        activeMinutes += 1;
+      }
+    });
+
+    const average = activeMinutes > 0 ? activeAverage / activeMinutes : 0;
+    setText(
+      dom.chartSummary,
+      peak > 0 ? `PIC ${peak} · MOY ${average.toFixed(1)}` : "—",
+    );
+    chart.setAttribute(
+      "aria-label",
+      `Activité des 60 dernières minutes, pic ${peak}, moyenne ${average.toFixed(1)}`,
+    );
+  }
+
+  function renderBarRows(container, rows) {
+    if (!container) return;
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "bar-empty";
+      empty.textContent = "AUCUNE DONNÉE";
+      container.replaceChildren(empty);
+      return;
+    }
+    const maximum = Math.max(1, ...rows.map((row) => row.count));
+    const fragment = document.createDocumentFragment();
+    for (const row of rows) {
+      const element = document.createElement("div");
+      element.className = "bar-row";
+      const label = document.createElement("span");
+      label.className = "bar-label";
+      label.textContent = row.label;
+      const track = document.createElement("span");
+      track.className = "bar-track";
+      const fill = document.createElement("span");
+      fill.className = "bar-fill";
+      fill.style.width = `${(row.count / maximum) * 100}%`;
+      track.appendChild(fill);
+      const value = document.createElement("span");
+      value.className = "bar-value";
+      value.textContent = String(row.count);
+      element.append(label, track, value);
+      fragment.appendChild(element);
+    }
+    container.replaceChildren(fragment);
+  }
+
+  function distanceBandRows() {
+    const bands = DISTANCE_BANDS.filter(
+      (band, index) => index === 0 || band.lower < state.rangeNm,
+    );
+    const counts = new Map(bands.map((band) => [band.label, 0]));
+    for (const aircraft of state.aircraft) {
+      const band =
+        bands.find((candidate) => aircraft.distance <= candidate.upper) ||
+        bands[bands.length - 1];
+      if (band) counts.set(band.label, counts.get(band.label) + 1);
+    }
+    return bands.map((band) => ({
+      label: band.label,
+      count: counts.get(band.label) || 0,
+    }));
+  }
+
+  function altitudeBandRows() {
+    const counts = new Map(ALTITUDE_BANDS.map((band) => [band.label, 0]));
+    for (const aircraft of state.aircraft) {
+      let label = "N/C";
+      if (aircraft.onGround) {
+        label = "SOL";
+      } else if (aircraft.altitude !== null) {
+        const band = ALTITUDE_BANDS.find(
+          (candidate) =>
+            Number.isFinite(candidate.max) && aircraft.altitude <= candidate.max,
+        );
+        if (band) label = band.label;
+      }
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return ALTITUDE_BANDS.map((band) => ({
+      label: band.label,
+      count: counts.get(band.label) || 0,
+    }));
+  }
+
+  function typeBandRows() {
+    const counts = new Map();
+    for (const aircraft of state.aircraft) {
+      const label = aircraft.type || "INCONNU";
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    const entries = [...counts.entries()].sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    );
+    const rows = entries
+      .slice(0, 5)
+      .map(([label, count]) => ({ label, count }));
+    if (entries.length > 5) {
+      rows.push({
+        label: "AUTRES",
+        count: entries.slice(5).reduce((sum, entry) => sum + entry[1], 0),
+      });
+    }
+    setText(dom.typesTotal, String(entries.length));
+    return rows;
+  }
+
+  function updateStatsAntenna() {
+    const range = Number.isFinite(state.rangeNm) ? state.rangeNm : 0;
+    const areaKm2 = Math.PI * (range * 1.852) ** 2;
+    setText(
+      dom.antennaCenter,
+      `${formatCoordinate(state.center.lat, "N", "S", 2)} ${formatCoordinate(state.center.lon, "E", "W", 3)}`,
+    );
+    setText(dom.antennaRange, String(Math.round(range)));
+    setText(dom.antennaMax, String(Math.round(state.maxRangeNm)));
+    setText(
+      dom.antennaArea,
+      `${Math.round(areaKm2).toLocaleString("fr-FR")} km²`,
+    );
+    setText(
+      dom.antennaMode,
+      state.locationMode === "airport" && state.airportIcao
+        ? `AÉROPORT ${state.airportIcao}`
+        : "GPS",
+    );
+    setText(dom.antennaSource, dom.sourceName.textContent || "—");
+  }
+
+  function renderStats() {
+    if (!state.stats) state.stats = emptyStats();
+    const stats = state.stats;
+    const current = state.aircraft.length;
+    let airborne = 0;
+    let ground = 0;
+    let emergency = 0;
+    for (const aircraft of state.aircraft) {
+      if (aircraft.onGround) ground += 1;
+      else airborne += 1;
+      if (aircraft.kind === "emergency") emergency += 1;
+    }
+
+    setText(dom.statCurrent, pad2(current));
+    setText(
+      dom.statBreakdown,
+      `${airborne} en vol · ${ground} au sol${emergency ? ` · ${emergency} urgence${emergency > 1 ? "s" : ""}` : ""}`,
+    );
+    setText(dom.statUnique, String(stats.unique.size));
+    setText(
+      dom.statSince,
+      stats.firstAt ? `depuis ${formatLocalTime(stats.firstAt)}` : "depuis —",
+    );
+    setText(dom.statPeak, pad2(stats.peak));
+    setText(dom.statObservations, stats.observations.toLocaleString("fr-FR"));
+    setText(
+      dom.statPolls,
+      `${stats.polls.toLocaleString("fr-FR")} relevé${stats.polls > 1 ? "s" : ""}`,
+    );
+    setText(
+      dom.statAverage,
+      stats.polls > 0 ? (stats.observations / stats.polls).toFixed(1) : "0.0",
+    );
+
+    renderActivityChart();
+    renderBarRows(dom.distanceBars, distanceBandRows());
+    renderBarRows(dom.altitudeBars, altitudeBandRows());
+    renderBarRows(dom.typeBars, typeBandRows());
+    updateStatsAntenna();
+    updateOpsCount();
+  }
+
+  function updateOpsCount() {
+    if (!dom.opsCount) return;
+    const total = state.aircraft.length;
+    setText(
+      dom.opsCount,
+      state.panelTab === "fleet"
+        ? `${pad2(state.filteredCount)}/${pad2(total)}`
+        : pad2(total),
+    );
+  }
+
+  function setPanelTab(tab) {
+    state.panelTab = tab === "fleet" ? "fleet" : "stats";
+    const statsActive = state.panelTab === "stats";
+    dom.statsTab.classList.toggle("is-active", statsActive);
+    dom.fleetTab.classList.toggle("is-active", !statsActive);
+    dom.statsTab.setAttribute("aria-selected", String(statsActive));
+    dom.fleetTab.setAttribute("aria-selected", String(!statsActive));
+    dom.statsView.hidden = !statsActive;
+    dom.fleetView.hidden = statsActive;
+    setText(dom.opsTitle, statsActive ? "STATISTIQUES" : "FLOTTE ADS-B");
+    if (statsActive) renderStats();
+    else updateOpsCount();
+  }
+
+  function resetStats() {
+    if (!window.confirm("Réinitialiser les statistiques de l'antenne ?")) return;
+    state.stats = emptyStats(localDateKey(), statsLocationKey());
+    persistStats();
+    renderStats();
+  }
+
+  function initStatsView() {
+    state.stats = loadStoredStats();
+    const today = localDateKey();
+    if (state.stats.date && state.stats.date !== today) {
+      state.stats = emptyStats(today, state.stats.location);
+    }
+    ensureActivityChart();
+    dom.statsTab.addEventListener("click", () => setPanelTab("stats"));
+    dom.fleetTab.addEventListener("click", () => setPanelTab("fleet"));
+    dom.resetStatsBtn.addEventListener("click", resetStats);
+    setPanelTab("stats");
+    renderStats();
+  }
+
   function selectAircraft(hex, pan = false) {
     state.selectedHex = hex;
+    if (hex) setPanelTab("fleet");
     renderAircraftMarkers();
     renderTable();
     renderSelection();
@@ -995,6 +1482,7 @@
         ? `AÉROPORT ${state.airportIcao}`
         : "COORDONNÉES GPS",
     );
+    updateStatsAntenna();
   }
 
   function applyCenter(center) {
@@ -1127,6 +1615,7 @@
         dom.latencyLabel,
         `LATENCE ${Math.round(performance.now() - started)} MS`,
       );
+      recordStats();
 
       const detailParts = [];
       if (fallback) detailParts.push("SECOURS");
@@ -1233,8 +1722,11 @@
       poll();
       refreshMetar(true);
       loadWeather();
+    } else {
+      persistStats();
     }
   });
+  window.addEventListener("pagehide", persistStats);
 
   window.setInterval(updateClock, 250);
   window.setInterval(() => {
@@ -1243,6 +1735,7 @@
     loadWeather();
   }, WEATHER_REFRESH_MS);
   updateClock();
+  initStatsView();
 
   (async () => {
     populateRanges();

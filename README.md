@@ -30,7 +30,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
 - Interface desktop standard sur `8083` : carte Leaflet, sans balayage ni
-  effets CRT, avec table de flotte, filtres, tri, export CSV et fiches cibles.
+  effets CRT, avec statistiques de réception, table de flotte, filtres, tri,
+  export CSV et fiches cibles.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource JavaScript/CSS frontend externe : Leaflet est embarqué
   localement, compatible Morph Browser / QtWebEngine.
@@ -365,19 +366,35 @@ Le service `desktop` est une interface dédiée sur un troisième port TCP. Elle
 remplace volontairement le scope PPI par une carte standard, sans balayage
 radar, rémanence phosphore ni effets CRT :
 
-- fond de carte sombre Esri et marqueurs avions orientés selon leur cap ;
-- aéroports et pistes superposés selon la portée sélectionnée ;
-- badges METAR VFR/MVFR/IFR/LIFR et fiche météo au clic sur un aéroport ;
-- couche de précipitations RainViewer activable ;
-- table complète des cibles dans la bulle ;
+- vue `STATISTIQUES` par défaut, centrée sur l'antenne configurée ;
+- comptage temps réel : avions dans la zone, en vol / au sol, urgences ;
+- compteurs du jour : avions uniques, pic simultané, contacts cumulés,
+  nombre de relevés et moyenne par relevé ;
+- graphique d'activité sur les 60 dernières minutes ;
+- répartition des contacts par distance, par altitude et par type d'appareil ;
+- panneau antenne : centre, portée courante, portée max, surface couverte et
+  source de données ;
+- statistiques persistées localement pour la journée en cours, liées au centre
+  et à la portée, avec remise à zéro manuelle ;
+- vue `FLOTTE` avec table complète des cibles dans la bulle ;
 - recherche par indicatif, type, hex ou squawk ;
 - filtres en vol / au sol / urgences ;
 - tri par indicatif, type, altitude, vitesse, squawk ou distance ;
 - sélection d'une ligne ou d'un marqueur pour centrer la carte et afficher la
   fiche détaillée de la cible ;
 - export CSV de la sélection filtrée ;
+- fond de carte sombre Esri et marqueurs avions orientés selon leur cap ;
+- aéroports et pistes superposés selon la portée sélectionnée ;
+- badges METAR VFR/MVFR/IFR/LIFR et fiche météo au clic sur un aéroport ;
+- couche de précipitations RainViewer activable ;
 - mêmes backend, configuration et données que le radar mobile ;
 - Leaflet 1.9.4 embarqué localement, sans CDN JavaScript/CSS.
+
+Les compteurs sont calculés à partir du flux ADS-B actif, dans la zone
+centre/portée configurée. Ils se réinitialisent automatiquement lorsque le
+centre ou la portée change, et sont conservés dans le stockage local du
+navigateur pour la journée en cours. Le panneau `ANTENNE RX` rappelle le centre,
+la portée et la source réellement utilisés.
 
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
