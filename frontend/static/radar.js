@@ -22,6 +22,43 @@
     LIFR: "#d36bff",
     UNKNOWN: "#7c8b9a",
   };
+  const RADAR_THEMES = {
+    phosphor: {
+      rgb: "0, 255, 102",
+      color: "#00ff66",
+      label: "#c4ffd8",
+      detail: "#51c77b",
+      bright: "#eaffef",
+      focus: "#c4ffd8",
+    },
+    amber: {
+      rgb: "255, 176, 0",
+      color: "#ffb000",
+      label: "#ffe4b0",
+      detail: "#b98232",
+      bright: "#fff3d0",
+      focus: "#ffe4b0",
+    },
+    ice: {
+      rgb: "125, 211, 252",
+      color: "#7dd3fc",
+      label: "#dcf6ff",
+      detail: "#5598b8",
+      bright: "#f0fcff",
+      focus: "#dcf6ff",
+    },
+    mono: {
+      rgb: "214, 230, 220",
+      color: "#d6e6dc",
+      label: "#ffffff",
+      detail: "#83998c",
+      bright: "#ffffff",
+      focus: "#ffffff",
+    },
+  };
+  let currentRadarStyle = "phosphor";
+  let currentRadarTheme = RADAR_THEMES.phosphor;
+  const radarColor = (alpha) => `rgba(${currentRadarTheme.rgb}, ${alpha})`;
   const FONT_STACK = '"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
   const MONTHS = ["JAN", "FEB", "MAR", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEP", "OCT", "NOV", "DEC"];
   const DEFAULT_CONFIG = Object.freeze({
@@ -30,6 +67,7 @@
     distNm: 50,
     maxDistNm: 150,
     refreshMs: 3000,
+    radarStyle: "phosphor",
   });
 
   const EMERGENCY_SQUAWKS = {
@@ -293,7 +331,14 @@
     if (callsign && MILITARY_CALLSIGN.test(callsign)) {
       return { ...MILITARY_STYLE, priority: 1, kind: "military" };
     }
-    return { ...NORMAL_STYLE, priority: 2, kind: "normal" };
+    return {
+      ...NORMAL_STYLE,
+      color: currentRadarTheme.color,
+      labelColor: currentRadarTheme.label,
+      detailColor: currentRadarTheme.detail,
+      priority: 2,
+      kind: "normal",
+    };
   }
 
   /* ========================================================================
@@ -632,9 +677,37 @@
     }
   }
 
+  function applyRadarStyle(style) {
+    const normalized = RADAR_THEMES[style] ? style : "phosphor";
+    if (
+      normalized === currentRadarStyle &&
+      document.documentElement.dataset.theme === normalized
+    ) {
+      return;
+    }
+
+    currentRadarStyle = normalized;
+    currentRadarTheme = RADAR_THEMES[normalized];
+    state.config.radarStyle = normalized;
+    document.documentElement.dataset.theme = normalized;
+
+    for (const target of state.targets) {
+      target.style = styleForTarget(target.rawCallsign, target.squawk);
+    }
+
+    if (view.ready) {
+      rebuildBackground();
+      rebuildSweep();
+    }
+  }
+
   function applyServerMeta(meta) {
     let changed = false;
     let rangeConfigChanged = false;
+
+    if (meta.radarStyle) {
+      applyRadarStyle(meta.radarStyle);
+    }
 
     if (meta.lat !== null && meta.lat !== state.config.lat) {
       state.config.lat = meta.lat;
@@ -698,8 +771,8 @@
 
     // Halo de phosphore très léger à l'intérieur du scope.
     const halo = g.createRadialGradient(cx, cy, R * 0.04, cx, cy, R * 1.01);
-    halo.addColorStop(0, "rgba(0, 255, 102, 0.034)");
-    halo.addColorStop(0.6, "rgba(0, 255, 102, 0.011)");
+    halo.addColorStop(0, radarColor(0.034));
+    halo.addColorStop(0.6, radarColor(0.011));
     halo.addColorStop(1, "rgba(0, 0, 0, 0)");
     g.fillStyle = halo;
     g.beginPath();
@@ -708,7 +781,7 @@
 
     // Axes N/S et E/O.
     g.save();
-    g.strokeStyle = "rgba(0, 255, 102, 0.085)";
+    g.strokeStyle = radarColor(0.085);
     g.lineWidth = 0.8;
     g.setLineDash([2, 6]);
     g.beginPath();
@@ -727,8 +800,8 @@
       const isOuter = index === 5;
       g.beginPath();
       g.strokeStyle = isOuter
-        ? "rgba(0, 255, 102, 0.31)"
-        : "rgba(0, 255, 102, 0.135)";
+        ? radarColor(0.31)
+        : radarColor(0.135);
       g.lineWidth = isOuter ? 1.25 : 0.85;
       g.arc(cx, cy, ringRadius, 0, TAU);
       g.stroke();
@@ -744,13 +817,13 @@
       g.fillStyle = "rgba(0, 0, 0, 0.75)";
       g.fillRect(lx - labelWidth / 2, ly - 6, labelWidth, 12);
       g.font = `${Math.max(7, view.detailFont - 1)}px ${FONT_STACK}`;
-      g.fillStyle = isOuter ? "rgba(0, 255, 102, 0.58)" : "rgba(0, 255, 102, 0.42)";
+      g.fillStyle = isOuter ? radarColor(0.58) : radarColor(0.42);
       g.fillText(label, lx, ly);
     }
 
     // Couronne extérieure et graduations de boussole.
     g.beginPath();
-    g.strokeStyle = "rgba(0, 255, 102, 0.1)";
+    g.strokeStyle = radarColor(0.1);
     g.lineWidth = 0.8;
     g.arc(cx, cy, R + 12, 0, TAU);
     g.stroke();
@@ -762,8 +835,8 @@
       const outer = R + (isMajor ? 9 : 4);
       g.beginPath();
       g.strokeStyle = isMajor
-        ? "rgba(0, 255, 102, 0.46)"
-        : "rgba(0, 255, 102, 0.2)";
+        ? radarColor(0.46)
+        : radarColor(0.2);
       g.lineWidth = isMajor ? 1 : 0.7;
       g.moveTo(cx + Math.sin(radians) * inner, cy - Math.cos(radians) * inner);
       g.lineTo(cx + Math.sin(radians) * outer, cy - Math.cos(radians) * outer);
@@ -774,7 +847,7 @@
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = `${Math.max(6, view.detailFont - 2.5)}px ${FONT_STACK}`;
-    g.fillStyle = "rgba(0, 255, 102, 0.34)";
+    g.fillStyle = radarColor(0.34);
     for (let degrees = 30; degrees < 360; degrees += 30) {
       if (degrees % 90 === 0) {
         continue;
@@ -807,7 +880,7 @@
 
     // Réticule central.
     g.save();
-    g.strokeStyle = "rgba(0, 255, 102, 0.55)";
+    g.strokeStyle = radarColor(0.55);
     g.lineWidth = 1;
     g.beginPath();
     g.moveTo(cx - 8, cy);
@@ -820,18 +893,18 @@
     g.lineTo(cx, cy + 8);
     g.stroke();
     g.beginPath();
-    g.fillStyle = "rgba(196, 255, 216, 0.85)";
+    g.fillStyle = currentRadarTheme.label;
     g.arc(cx, cy, 1.7, 0, TAU);
     g.fill();
     g.restore();
 
     // Anneau extérieur lumineux (statique, donc shadowBlur acceptable).
     g.save();
-    g.strokeStyle = "rgba(0, 255, 102, 0.15)";
+    g.strokeStyle = radarColor(0.15);
     g.lineWidth = 5;
     g.arc(cx, cy, R, 0, TAU);
     g.stroke();
-    g.strokeStyle = "rgba(0, 255, 102, 0.52)";
+    g.strokeStyle = radarColor(0.52);
     g.lineWidth = 1;
     g.arc(cx, cy, R, 0, TAU);
     g.stroke();
@@ -907,7 +980,7 @@
       g.moveTo(center, center);
       g.arc(center, center, R, start, end);
       g.closePath();
-      g.fillStyle = `rgba(0, 255, 102, ${alpha})`;
+      g.fillStyle = radarColor(alpha);
       g.fill();
     }
 
@@ -915,9 +988,9 @@
     g.save();
     g.globalCompositeOperation = "lighter";
     const beam = g.createLinearGradient(center, center, center + R, center);
-    beam.addColorStop(0, "rgba(0, 255, 102, 0.035)");
-    beam.addColorStop(0.72, "rgba(0, 255, 102, 0.38)");
-    beam.addColorStop(1, "rgba(0, 255, 102, 0.95)");
+    beam.addColorStop(0, radarColor(0.035));
+    beam.addColorStop(0.72, radarColor(0.38));
+    beam.addColorStop(1, radarColor(0.95));
     g.strokeStyle = beam;
     g.lineWidth = 1.25;
     g.beginPath();
@@ -925,7 +998,7 @@
     g.lineTo(center + R, center);
     g.stroke();
 
-    g.strokeStyle = "rgba(0, 255, 102, 0.13)";
+    g.strokeStyle = radarColor(0.13);
     g.lineWidth = 4;
     g.beginPath();
     g.moveTo(center, center);
@@ -1867,7 +1940,7 @@
       ctx.restore();
 
       ctx.globalAlpha = 0.55 + 0.45 * intensity;
-      ctx.fillStyle = "#eaffef";
+      ctx.fillStyle = currentRadarTheme.bright;
       ctx.beginPath();
       ctx.arc(x, y, 1.1, 0, TAU);
       ctx.fill();
@@ -1944,7 +2017,7 @@
         ctx.lineTo(x + size, y + size - 4);
         ctx.stroke();
         ctx.globalAlpha = 0.34;
-        ctx.strokeStyle = "#c4ffd8";
+        ctx.strokeStyle = currentRadarTheme.focus;
         ctx.beginPath();
         ctx.arc(x, y, size + 5, 0, TAU);
         ctx.stroke();
@@ -2178,6 +2251,7 @@
       lastSuccess: response.headers.get("X-Last-Success"),
       refreshMs: numberOrNull(response.headers.get("X-Refresh-Ms")),
       maxDistNm: numberOrNull(response.headers.get("X-Max-Range-NM")),
+      radarStyle: response.headers.get("X-Radar-Style"),
       lat: numberOrNull(response.headers.get("X-Center-Lat")),
       lon: numberOrNull(response.headers.get("X-Center-Lon")),
     };
@@ -2325,6 +2399,9 @@
       const distNm = toFiniteNumber(config.dist_nm);
       const maxDistNm = toFiniteNumber(config.max_radius_nm);
       const refreshMs = toFiniteNumber(config.refresh_ms);
+      if (typeof config.radar_style === "string") {
+        applyRadarStyle(config.radar_style);
+      }
 
       if (lat !== null) {
         state.config.lat = lat;
@@ -2434,6 +2511,7 @@
      ======================================================================== */
 
   setupResizeHandling();
+  applyRadarStyle(DEFAULT_CONFIG.radarStyle);
   resizeCanvas();
   updateHud();
   updateRangeButtons();

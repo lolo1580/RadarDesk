@@ -23,6 +23,7 @@ services:
       ADSB_LOG_LEVEL: "${ADSB_LOG_LEVEL:-INFO}"
       ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-*}"
       ADSB_METAR_PROVIDER: "${ADSB_METAR_PROVIDER:-aviationweather}"
+      ADSB_RADAR_STYLE: "${ADSB_RADAR_STYLE:-phosphor}"
       METAR_TAF_API_KEY: "${METAR_TAF_API_KEY:-}"
       CHECKWX_API_KEY: "${CHECKWX_API_KEY:-}"
       ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json

@@ -25,6 +25,7 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   avec bascule vers les contacts prioritaires.
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
+- Quatre styles de radar : phosphore vert, ambre CRT, bleu glacé et monochrome.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Aucune ressource frontend externe : compatible Morph Browser / QtWebEngine.
 
@@ -205,7 +206,8 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
-| `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather` ou `metar_taf` |
+| `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `amber`, `ice` ou `mono` |
+| `ADSB_METAR_PROVIDER` | `aviationweather` | Source METAR : `aviationweather`, `metar_taf` ou `checkwx` |
 | `METAR_TAF_API_KEY` | — | Clé API metar-taf.com |
 | `CHECKWX_API_KEY` | — | Clé API CheckWX |
 | `ADSB_INTERNAL_TOKEN` | — | Jeton interne backend ↔ admin, obligatoire |
@@ -437,6 +439,21 @@ moyens sont étiquetés en priorité à courte portée pour éviter la surcharge
 Source : [OurAirports](https://ourairports.com/data/), données du domaine public.
 La génération et le filtrage du jeu de données sont décrits dans
 `frontend/static/data/README.txt`.
+
+## Styles de radar
+
+Quatre ambiances sont disponibles, sélectionnables dans
+**Administration → AFFICHAGE → STYLE RADAR** :
+
+- `phosphor` : phosphore vert historique ;
+- `amber` : tube CRT ambre ;
+- `ice` : bleu glacé ;
+- `mono` : monochrome blanc cassé.
+
+Le style est appliqué à chaud à tous les clients au prochain polling, sans
+redémarrage. Le fond, le balayage, la grille et les cibles changent de palette ;
+les alertes rouges, les aéroports cyan et les précipitations bleues conservent
+leur code couleur fonctionnel.
 
 ## Météo
 

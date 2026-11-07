@@ -67,6 +67,10 @@ METAR_PROVIDER = os.getenv("ADSB_METAR_PROVIDER", "aviationweather").strip().low
 METAR_TAF_API_KEY = os.getenv("METAR_TAF_API_KEY", "").strip()
 CHECKWX_API_KEY = os.getenv("CHECKWX_API_KEY", "").strip()
 METAR_PROVIDERS = {"aviationweather", "metar_taf", "checkwx"}
+RADAR_STYLE = os.getenv("ADSB_RADAR_STYLE", "phosphor").strip().lower()
+RADAR_STYLES = {"phosphor", "amber", "ice", "mono"}
+if RADAR_STYLE not in RADAR_STYLES:
+    raise RuntimeError("ADSB_RADAR_STYLE doit être phosphor, amber, ice ou mono.")
 if METAR_PROVIDER not in METAR_PROVIDERS:
     raise RuntimeError(
         "ADSB_METAR_PROVIDER doit être aviationweather, metar_taf ou checkwx."
@@ -173,6 +177,7 @@ BASELINE_CONFIG: dict[str, Any] = {
     "fallback_provider": FALLBACK.key if FALLBACK else "none",
     "primary_cooldown_s": PRIMARY_COOLDOWN_S,
     "weather_metar_provider": METAR_PROVIDER,
+    "radar_style": RADAR_STYLE,
 }
 
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
@@ -283,6 +288,7 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         .strip()
         .lower()
     )
+    radar_style = str(payload.get("radar_style", values["radar_style"])).strip().lower()
     if primary not in PROVIDERS:
         raise ValueError(f"Source primaire inconnue: {primary!r}.")
     if fallback != "none" and fallback not in PROVIDERS:
@@ -297,6 +303,8 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         raise ValueError("METAR_TAF_API_KEY est requis pour metar-taf.com.")
     if weather_metar == "checkwx" and not CHECKWX_API_KEY:
         raise ValueError("CHECKWX_API_KEY est requis pour CheckWX.")
+    if radar_style not in RADAR_STYLES:
+        raise ValueError(f"Style radar inconnu: {radar_style!r}.")
 
     if not -90.0 <= values["lat"] <= 90.0:
         raise ValueError("La latitude doit être comprise entre -90 et 90.")
@@ -322,6 +330,7 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
     values["primary_provider"] = primary
     values["fallback_provider"] = fallback
     values["weather_metar_provider"] = weather_metar
+    values["radar_style"] = radar_style
     return values
 
 
@@ -340,7 +349,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global LAT, LON, DIST_NM, MAX_RADIUS_NM
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
-    global METAR_PROVIDER
+    global METAR_PROVIDER, RADAR_STYLE
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
 
@@ -355,6 +364,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     PRIMARY_PROVIDER = str(values["primary_provider"])
     FALLBACK_PROVIDER = str(values["fallback_provider"])
     METAR_PROVIDER = str(values["weather_metar_provider"])
+    RADAR_STYLE = str(values["radar_style"])
     PRIMARY = PROVIDERS[PRIMARY_PROVIDER]
     FALLBACK = PROVIDERS[FALLBACK_PROVIDER] if FALLBACK_PROVIDER != "none" else None
     _cache = None
@@ -390,6 +400,7 @@ def config_payload() -> dict[str, Any]:
         "weather_metar_provider": METAR_PROVIDER,
         "metar_taf_configured": bool(METAR_TAF_API_KEY),
         "checkwx_configured": bool(CHECKWX_API_KEY),
+        "radar_style": RADAR_STYLE,
         "config_source": "runtime" if _runtime_config_active else "environment",
     }
 
@@ -719,6 +730,7 @@ def apply_cache_headers(
     response.headers["X-Default-Range-NM"] = str(DIST_NM)
     response.headers["X-Center-Lat"] = f"{LAT:.6f}"
     response.headers["X-Center-Lon"] = f"{LON:.6f}"
+    response.headers["X-Radar-Style"] = RADAR_STYLE
 
 
 # ============================================================================
@@ -779,6 +791,7 @@ app.add_middleware(
         "X-Default-Range-NM",
         "X-Center-Lat",
         "X-Center-Lon",
+        "X-Radar-Style",
     ],
 )
 

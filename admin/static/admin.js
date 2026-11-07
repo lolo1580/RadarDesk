@@ -101,6 +101,7 @@
 
     const primary = dom.form.elements.namedItem("primary_provider");
     const fallback = dom.form.elements.namedItem("fallback_provider");
+    const radarStyle = dom.form.elements.namedItem("radar_style");
     const weatherMetar = dom.form.elements.namedItem("weather_metar_provider");
     const metarOption = weatherMetar?.querySelector('option[value="metar_taf"]');
     const checkwxOption = weatherMetar?.querySelector('option[value="checkwx"]');
@@ -111,6 +112,9 @@
     }
     if (fallback) {
       fallback.value = config.fallback_provider_key || "none";
+    }
+    if (radarStyle) {
+      radarStyle.value = config.radar_style || "phosphor";
     }
     if (weatherMetar) {
       if (metarOption) {
@@ -240,6 +244,7 @@
     payload.weather_metar_provider = dom.form.elements.namedItem(
       "weather_metar_provider",
     ).value;
+    payload.radar_style = dom.form.elements.namedItem("radar_style").value;
     return payload;
   }
 
