@@ -14,6 +14,12 @@
     configDetail: document.getElementById("configDetail"),
     configSource: document.getElementById("configSource"),
     securityWarning: document.getElementById("securityWarning"),
+    linkPill: document.getElementById("linkPill"),
+    linkPillText: document.getElementById("linkPillText"),
+    statsState: document.getElementById("statsState"),
+    statsDetail: document.getElementById("statsDetail"),
+    influxState: document.getElementById("influxState"),
+    influxDetail: document.getElementById("influxDetail"),
     message: document.getElementById("message"),
     lastRefresh: document.getElementById("lastRefresh"),
     saveBtn: document.getElementById("saveBtn"),
@@ -333,6 +339,8 @@
           : radar.status || "connecté"
         : status.error || "backend injoignable",
     );
+    setText(dom.linkPillText, online ? "EN LIGNE" : "HORS LIGNE");
+    dom.linkPill.dataset.state = online ? "live" : "offline";
 
     setText(dom.sourceState, radar.source ? radar.source.toUpperCase() : "—");
     setText(
@@ -352,6 +360,49 @@
     );
 
     dom.securityWarning.hidden = !status.default_credentials;
+
+    const statsEnabled = online && Boolean(radar.stats_enabled);
+    setText(dom.statsState, online ? (statsEnabled ? "ACTIF" : "OFF") : "—");
+    dom.statsState.className = `stat__value ${statsEnabled ? "is-online" : "is-muted"}`;
+    setText(
+      dom.statsDetail,
+      online
+        ? statsEnabled
+          ? `${Number(config.stats_sample_seconds || 30)} s · ${Number(config.stats_retention_days || 180)} j`
+          : radar.stats_error || "désactivé"
+        : "indisponible",
+    );
+
+    const influxEnabled = Boolean(config.influx_enabled);
+    const influxReady =
+      influxEnabled &&
+      Boolean(config.influx_url) &&
+      Boolean(config.influx_org) &&
+      Boolean(config.influx_bucket) &&
+      Boolean(config.influx_token_configured);
+    setText(
+      dom.influxState,
+      online
+        ? influxEnabled
+          ? influxReady
+            ? "ACTIF"
+            : "INCOMPLET"
+          : "OFF"
+        : "—",
+    );
+    dom.influxState.className = `stat__value ${
+      influxReady ? "is-online" : influxEnabled ? "is-warning" : "is-muted"
+    }`;
+    setText(
+      dom.influxDetail,
+      online
+        ? influxEnabled
+          ? influxReady
+            ? "prêt à exporter"
+            : "configuration incomplète"
+          : "désactivé"
+        : "indisponible",
+    );
 
     const isRuntime = config.config_source === "runtime";
     setText(dom.configState, isRuntime ? "RUNTIME" : "ENV");
@@ -480,6 +531,7 @@
         fillConfig(result.config);
       }
       await loadStatus(false);
+      window.setTimeout(() => loadStatus(false), 1200);
       setMessage("Configuration appliquée et backend rechargé.", "success");
     } catch (error) {
       setMessage(
@@ -503,6 +555,7 @@
         fillConfig(result.config);
       }
       await loadStatus(false);
+      window.setTimeout(() => loadStatus(false), 1200);
       setMessage("Backend rechargé depuis le fichier runtime.", "success");
     } catch (error) {
       setMessage(
@@ -530,6 +583,7 @@
         fillConfig(result.config);
       }
       await loadStatus(false);
+      window.setTimeout(() => loadStatus(false), 1200);
       setMessage("Configuration réinitialisée depuis l'environnement.", "success");
     } catch (error) {
       setMessage(
@@ -623,6 +677,23 @@
     dom.form.elements.namedItem(name).addEventListener("input", updateLocationHint);
   }
 
+  function setupSideNav() {
+    const links = [...document.querySelectorAll(".side-nav a")];
+    const activate = (id) => {
+      for (const link of links) {
+        link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`);
+      }
+    };
+    for (const link of links) {
+      link.addEventListener("click", () => activate(link.getAttribute("href").slice(1)));
+    }
+    const hash = window.location.hash.slice(1);
+    if (hash && links.some((link) => link.getAttribute("href") === `#${hash}`)) {
+      activate(hash);
+    }
+  }
+
+  setupSideNav();
   loadAdminAirports().finally(() => loadStatus(true));
   scheduleStatusPoll();
 })();

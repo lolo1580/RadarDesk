@@ -455,7 +455,8 @@ Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
 Le service `admin` est séparé du backend radar :
 
-- interface web sombre et responsive sur `http://<hôte>:8082` ;
+- interface web moderne sombre et responsive sur `http://<hôte>:8082`,
+  organisée en sections avec tableau de bord d'état ;
 - HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
 - état du radar : source, cache, nombre de cibles, configuration active ;
 - modification à chaud de la position (coordonnées GPS ou code OACI), des
