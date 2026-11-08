@@ -492,6 +492,12 @@ Sur les grands écrans, la vue statistiques occupe toute la hauteur disponible ;
 sur les résolutions plus basses, elle défile verticalement sans compresser les
 panneaux.
 
+Le bouton **PERSONNALISER** permet d'afficher ou de masquer chaque module
+(cartes KPI, graphiques, répartitions, top immatriculations, antenne). La grille
+se réorganise automatiquement pour occuper la largeur disponible. La
+disposition et la période de cumul sont mémorisées dans le navigateur
+(`localStorage`) ; aucune préférence n'est envoyée au serveur.
+
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 
 ## Administration

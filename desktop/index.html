@@ -175,12 +175,15 @@
               <option value="180">180 JOURS</option>
             </select>
           </label>
+          <button class="stats-customize-button" id="statsCustomizeBtn" type="button">
+            PERSONNALISER
+          </button>
           <p class="stats-page-sub">SQLite · historique 7 jours · compteurs serveur</p>
         </div>
       </header>
 
       <section class="stats-view stats-view--page" id="statsView">
-        <div class="stat-cards">
+        <div class="stat-cards" data-widget="cards">
           <article class="stat-card stat-card--wide">
             <span>AVIONS DANS LA ZONE</span>
             <strong id="statCurrent">00</strong>
@@ -213,7 +216,7 @@
           </article>
         </div>
 
-        <div class="stat-panel stat-panel--chart">
+        <div class="stat-panel stat-panel--chart" data-widget="chart">
           <header>
             <span>ACTIVITÉ 60 MIN</span>
             <strong id="chartSummary">—</strong>
@@ -224,12 +227,12 @@
           </div>
         </div>
 
-        <div class="stat-panel stat-panel--daily">
+        <div class="stat-panel stat-panel--daily" data-widget="daily">
           <header><span>7 DERNIERS JOURS</span><span>UNIQUES</span></header>
           <div class="bar-list" id="dailyBars"></div>
         </div>
 
-        <div class="stat-panel stat-panel--hourly">
+        <div class="stat-panel stat-panel--hourly" data-widget="hourly">
           <header>
             <span>ACTIVITÉ PAR HEURE</span>
             <strong id="hourlySummary">—</strong>
@@ -243,22 +246,22 @@
           </div>
         </div>
 
-        <div class="stat-panel stat-panel--distance">
+        <div class="stat-panel stat-panel--distance" data-widget="distance">
           <header><span>PAR DISTANCE</span><span>NM</span></header>
           <div class="bar-list" id="distanceBars"></div>
         </div>
 
-        <div class="stat-panel stat-panel--altitude">
+        <div class="stat-panel stat-panel--altitude" data-widget="altitude">
           <header><span>PAR ALTITUDE</span><span>FT</span></header>
           <div class="bar-list" id="altitudeBars"></div>
         </div>
 
-        <div class="stat-panel stat-panel--types">
+        <div class="stat-panel stat-panel--types" data-widget="types">
           <header><span>TYPES ACTUELS</span><span id="typesTotal">0</span></header>
           <div class="bar-list" id="typeBars"></div>
         </div>
 
-        <div class="stat-panel stat-panel--registrations">
+        <div class="stat-panel stat-panel--registrations" data-widget="registrations">
           <header>
             <span>TOP IMMATRICULATIONS</span>
             <span id="registrationPasses">— PASSAGES</span>
@@ -266,7 +269,7 @@
           <div class="bar-list" id="registrationBars"></div>
         </div>
 
-        <div class="stat-panel stat-panel--antenna">
+        <div class="stat-panel stat-panel--antenna" data-widget="antenna">
           <header><span>ANTENNE RX</span><span id="antennaMode">—</span></header>
           <dl class="antenna-grid">
             <dt>Centre</dt><dd id="antennaCenter">—</dd>
@@ -279,6 +282,35 @@
         </div>
       </section>
     </main>
+
+    <dialog class="stats-customize" id="statsCustomizeDialog"
+            aria-labelledby="statsCustomizeTitle">
+      <form method="dialog">
+        <header class="stats-customize__head">
+          <div>
+            <p class="eyebrow">AFFICHAGE</p>
+            <h3 id="statsCustomizeTitle">Personnaliser les statistiques</h3>
+          </div>
+          <button class="icon-button" value="close" aria-label="Fermer">
+            <span aria-hidden="true">✕</span>
+          </button>
+        </header>
+        <p class="stats-customize__hint">
+          Cochez les modules à afficher. La disposition s'adapte
+          automatiquement et reste mémorisée dans ce navigateur.
+        </p>
+        <ol class="stats-customize__list" id="statsCustomizeList"></ol>
+        <footer class="stats-customize__actions">
+          <button class="stats-customize__button" type="button" id="statsCustomizeReset">
+            RÉINITIALISER
+          </button>
+          <button class="stats-customize__button stats-customize__button--primary"
+                  value="close">
+            TERMINER
+          </button>
+        </footer>
+      </form>
+    </dialog>
   </div>
 
   <script src="/vendor/leaflet/leaflet.js"></script>

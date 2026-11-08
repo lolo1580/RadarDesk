@@ -460,8 +460,10 @@ h1 span {
 
 .stats-page-tools {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  justify-content: flex-end;
+  gap: 8px 16px;
 }
 
 .stats-page-sub {
@@ -496,6 +498,29 @@ h1 span {
 
 .stats-period select:focus-visible {
   border-color: var(--accent);
+}
+
+.stats-customize-button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--muted);
+  font: 600 9px var(--sans);
+  letter-spacing: 0.08em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stats-customize-button:hover,
+.stats-customize-button:focus-visible {
+  color: var(--accent-soft);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.stats-page [data-widget][hidden] {
+  display: none !important;
 }
 
 .stats-page .stats-view {
@@ -639,6 +664,145 @@ h1 span {
 
 .stats-page .stats-note {
   max-width: none;
+}
+
+.stats-customize {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(82vh, 720px);
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.65);
+}
+
+.stats-customize::backdrop {
+  background: rgba(3, 7, 12, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.stats-customize form {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+  margin: 0;
+  overflow: hidden;
+}
+
+.stats-customize__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stats-customize__head h3 {
+  margin: 0;
+  color: #f0f7fd;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.stats-customize__hint {
+  margin: 12px 20px 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.stats-customize__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  margin: 12px 20px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: var(--line) transparent;
+  scrollbar-width: thin;
+}
+
+.stats-customize__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+}
+
+.stats-customize__check {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.stats-customize__check input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.stats-customize__check input:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.stats-customize__check span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-customize__actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.stats-customize__button {
+  min-height: 32px;
+  padding: 0 12px;
+  color: var(--text);
+  font: 600 9px var(--sans);
+  letter-spacing: 0.08em;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stats-customize__button:hover,
+.stats-customize__button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.stats-customize__button--primary {
+  color: #03121a;
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+
+.stats-customize__button--primary:hover,
+.stats-customize__button--primary:focus-visible {
+  color: #03121a;
+  border-color: #bae6fd;
 }
 
 .map-panel {
@@ -1525,7 +1689,7 @@ h1 span {
   }
 
   .stats-page .stats-view {
-    grid-template-rows: auto;
+    grid-template-rows: auto !important;
     min-height: 0;
   }
 
@@ -1537,14 +1701,8 @@ h1 span {
     grid-column: 1 / -1;
   }
 
-  .stats-page .stat-panel--chart,
-  .stats-page .stat-panel--daily,
-  .stats-page .stat-panel--hourly,
-  .stats-page .stat-panel--distance,
-  .stats-page .stat-panel--altitude,
-  .stats-page .stat-panel--types,
-  .stats-page .stat-panel--registrations {
-    grid-column: 1 / -1;
+  .stats-page [data-widget] {
+    grid-column: 1 / -1 !important;
   }
 
   .stats-page .stat-panel--chart .chart-wrap,

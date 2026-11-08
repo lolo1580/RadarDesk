@@ -6,6 +6,20 @@
   const POLL_MS = 3000;
   const WEATHER_REFRESH_MS = 5 * 60 * 1000;
   const STATS_REFRESH_MS = 10000;
+  const STATS_LAYOUT_KEY = "radardesk.statsLayout.v1";
+  const STATS_PERIOD_KEY = "radardesk.statsRegistrationDays.v1";
+  const STATS_PERIOD_VALUES = [1, 7, 30, 180];
+  const STATS_WIDGETS = [
+    { id: "cards", label: "Cartes KPI" },
+    { id: "chart", label: "Activité 60 min" },
+    { id: "daily", label: "7 derniers jours" },
+    { id: "hourly", label: "Activité par heure" },
+    { id: "distance", label: "Par distance" },
+    { id: "altitude", label: "Par altitude" },
+    { id: "types", label: "Types actuels" },
+    { id: "registrations", label: "Top immatriculations" },
+    { id: "antenna", label: "Antenne RX" },
+  ];
   const REDUCED_MOTION =
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
   const DISTANCE_BANDS = [
@@ -88,6 +102,10 @@
     registrationBars: document.getElementById("registrationBars"),
     registrationPasses: document.getElementById("registrationPasses"),
     registrationPeriod: document.getElementById("registrationPeriod"),
+    statsCustomizeBtn: document.getElementById("statsCustomizeBtn"),
+    statsCustomizeDialog: document.getElementById("statsCustomizeDialog"),
+    statsCustomizeList: document.getElementById("statsCustomizeList"),
+    statsCustomizeReset: document.getElementById("statsCustomizeReset"),
     dailyBars: document.getElementById("dailyBars"),
     antennaMode: document.getElementById("antennaMode"),
     antennaCenter: document.getElementById("antennaCenter"),
@@ -128,6 +146,7 @@
     statsFetchedAt: 0,
     statsRequestSeq: 0,
     registrationDays: 1,
+    statsLayout: null,
     search: "",
     filter: "all",
     sortKey: "distance",
@@ -163,6 +182,23 @@
   const setText = (node, value) => {
     if (node && node.textContent !== String(value)) node.textContent = String(value);
   };
+
+  function storageRead(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function storageWrite(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      // Navigation privée ou stockage désactivé : la préférence reste en
+      // mémoire pour la session courante.
+    }
+  }
 
   const pad2 = (value) => String(value).padStart(2, "0");
 
@@ -1233,6 +1269,161 @@
     return "aujourd'hui";
   }
 
+  function defaultStatsLayout() {
+    return { hidden: [] };
+  }
+
+  function loadStatsLayout() {
+    const fallback = defaultStatsLayout();
+    const raw = storageRead(STATS_LAYOUT_KEY);
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw);
+      const known = new Set(STATS_WIDGETS.map((widget) => widget.id));
+      const hidden = [];
+      if (Array.isArray(parsed.hidden)) {
+        for (const id of parsed.hidden) {
+          if (known.has(id) && !hidden.includes(id)) hidden.push(id);
+        }
+      }
+      if (hidden.length >= STATS_WIDGETS.length) hidden.length = 0;
+      return { hidden };
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveStatsLayout() {
+    storageWrite(STATS_LAYOUT_KEY, JSON.stringify(state.statsLayout));
+  }
+
+  function applyStatsLayout() {
+    const layout = state.statsLayout || defaultStatsLayout();
+    const hidden = new Set(layout.hidden);
+    const view = document.getElementById("statsView");
+    if (!view) return;
+
+    for (const widget of STATS_WIDGETS) {
+      const element = document.querySelector(`[data-widget="${widget.id}"]`);
+      if (!element) continue;
+      element.hidden = hidden.has(widget.id);
+      element.style.order = "";
+    }
+
+    // Les deux graphiques principaux partagent une ligne. Si l'un est masqué,
+    // l'autre occupe toute la largeur.
+    const pair = ["chart", "daily"];
+    const pairVisible = pair.filter((id) => !hidden.has(id));
+    for (const id of pair) {
+      const element = document.querySelector(`[data-widget="${id}"]`);
+      if (!element || hidden.has(id)) continue;
+      element.style.gridColumn =
+        pairVisible.length === 1 ? "1 / -1" : id === "chart" ? "span 7" : "span 5";
+    }
+
+    // Les répartitions se partagent équitablement la largeur restante.
+    const quarters = ["distance", "altitude", "types", "registrations"];
+    const quarterVisible = quarters.filter((id) => !hidden.has(id));
+    const quarterSpan = quarterVisible.length
+      ? String(12 / quarterVisible.length)
+      : "";
+    for (const id of quarters) {
+      const element = document.querySelector(`[data-widget="${id}"]`);
+      if (!element || hidden.has(id)) continue;
+      element.style.gridColumn = `span ${quarterSpan}`;
+    }
+
+    for (const id of ["cards", "hourly", "antenna"]) {
+      const element = document.querySelector(`[data-widget="${id}"]`);
+      if (!element || hidden.has(id)) continue;
+      element.style.gridColumn = "1 / -1";
+    }
+
+    // Les lignes masquées sont retirées de la grille pour éviter les trous.
+    const rows = [];
+    if (!hidden.has("cards")) rows.push("auto");
+    if (pairVisible.length) rows.push("minmax(150px, 1.05fr)");
+    if (!hidden.has("hourly")) rows.push("minmax(150px, 1fr)");
+    if (quarterVisible.length) rows.push("minmax(196px, 0.95fr)");
+    if (!hidden.has("antenna")) rows.push("auto");
+    view.style.gridTemplateRows = rows.length ? rows.join(" ") : "auto";
+    // Avec un seul module, ne pas étirer artificiellement sa ligne.
+    view.style.alignContent = rows.length <= 1 ? "start" : "";
+    view.style.minHeight = rows.length <= 1 ? "0" : "";
+  }
+
+  function renderStatsCustomizeList(focusId = null) {
+    if (!dom.statsCustomizeList || !state.statsLayout) return;
+    const hidden = new Set(state.statsLayout.hidden);
+    const visibleCount = STATS_WIDGETS.length - hidden.size;
+    const fragment = document.createDocumentFragment();
+
+    for (const widget of STATS_WIDGETS) {
+      const visible = !hidden.has(widget.id);
+      const item = document.createElement("li");
+      item.className = "stats-customize__item";
+      item.dataset.widgetId = widget.id;
+
+      const label = document.createElement("label");
+      label.className = "stats-customize__check";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = visible;
+      checkbox.disabled = visible && visibleCount <= 1;
+      checkbox.dataset.role = "visible";
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          const hiddenIndex = state.statsLayout.hidden.indexOf(widget.id);
+          if (hiddenIndex >= 0) state.statsLayout.hidden.splice(hiddenIndex, 1);
+        } else if (!state.statsLayout.hidden.includes(widget.id)) {
+          state.statsLayout.hidden.push(widget.id);
+        }
+        saveStatsLayout();
+        applyStatsLayout();
+        renderStatsCustomizeList(widget.id);
+      });
+      const text = document.createElement("span");
+      text.textContent = widget.label;
+      label.append(checkbox, text);
+      item.append(label);
+      fragment.appendChild(item);
+    }
+
+    dom.statsCustomizeList.replaceChildren(fragment);
+    if (focusId) {
+      dom.statsCustomizeList
+        .querySelector(`[data-widget-id="${focusId}"] [data-role="visible"]`)
+        ?.focus();
+    }
+  }
+
+  function openStatsCustomize() {
+    if (!dom.statsCustomizeDialog) return;
+    renderStatsCustomizeList();
+    if (!dom.statsCustomizeDialog.open) {
+      dom.statsCustomizeDialog.showModal();
+    }
+  }
+
+  function resetStatsLayout() {
+    state.statsLayout = defaultStatsLayout();
+    saveStatsLayout();
+    applyStatsLayout();
+    renderStatsCustomizeList();
+  }
+
+  function initStatsCustomization() {
+    state.statsLayout = loadStatsLayout();
+    applyStatsLayout();
+    dom.statsCustomizeBtn?.addEventListener("click", openStatsCustomize);
+    dom.statsCustomizeReset?.addEventListener("click", resetStatsLayout);
+  }
+
+  function loadRegistrationPeriod() {
+    const stored = Number(storageRead(STATS_PERIOD_KEY));
+    return STATS_PERIOD_VALUES.includes(stored) ? stored : 1;
+  }
+
   function renderDailyBars() {
     const summary = state.statsSummary;
     const rows =
@@ -1407,18 +1598,19 @@
 
   function initStatsView() {
     ensureActivityChart();
+    initStatsCustomization();
     dom.mapViewBtn.addEventListener("click", () => setMainView("map"));
     dom.statsViewBtn.addEventListener("click", () => setMainView("stats"));
     if (dom.registrationPeriod) {
-      state.registrationDays = Math.max(
-        1,
-        Number(dom.registrationPeriod.value) || 1,
-      );
+      const storedPeriod = loadRegistrationPeriod();
+      dom.registrationPeriod.value = String(storedPeriod);
+      state.registrationDays = storedPeriod;
       dom.registrationPeriod.addEventListener("change", () => {
         state.registrationDays = Math.max(
           1,
           Number(dom.registrationPeriod.value) || 1,
         );
+        storageWrite(STATS_PERIOD_KEY, String(state.registrationDays));
         loadServerStats();
       });
     }
