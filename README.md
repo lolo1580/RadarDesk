@@ -472,6 +472,9 @@ lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
 du volume Docker `radardesk_stats_data`. La vue `STATISTIQUES` regroupe les
 indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions et le
 panneau `ANTENNE RX` ; la vue `CARTE` reste centrée sur la carte et la flotte.
+Sur les grands écrans, la vue statistiques occupe toute la hauteur disponible ;
+sur les résolutions plus basses, elle défile verticalement sans compresser les
+panneaux.
 
 Le port est configurable avec `ADSB_DESKTOP_PORT`.
 

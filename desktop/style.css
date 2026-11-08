@@ -419,9 +419,11 @@ h1 span {
 }
 
 .stats-page {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 16px clamp(14px, 2.5vw, 32px);
+  padding: 20px clamp(16px, 2.2vw, 36px) 22px;
   overflow-y: auto;
   background: var(--bg);
   scrollbar-color: var(--line) transparent;
@@ -443,15 +445,15 @@ h1 span {
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 11px;
-  margin-bottom: 13px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
 
 .stats-page-head h2 {
   margin: 0;
   color: #f0f7fd;
-  font-size: clamp(18px, 1.8vw, 24px);
+  font-size: clamp(24px, 2vw, 32px);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -459,7 +461,7 @@ h1 span {
 .stats-page-sub {
   margin: 0;
   color: var(--dim);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.05em;
   text-align: right;
 }
@@ -467,9 +469,12 @@ h1 span {
 .stats-page .stats-view {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 12px;
-  flex: none;
-  min-height: 0;
+  /* Les lignes remplissent l'écran ; la hauteur minimale force le défilement
+     plutôt que l'écrasement des panneaux sur les écrans plus bas. */
+  grid-template-rows: auto minmax(150px, 1.05fr) minmax(150px, 1fr) minmax(196px, 0.95fr) auto;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 757px;
   padding: 0;
   overflow: visible;
   scrollbar-gutter: auto;
@@ -478,11 +483,15 @@ h1 span {
 .stats-page .stat-cards {
   grid-column: 1 / -1;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  gap: 12px;
 }
 
 .stats-page .stat-card {
-  padding: 12px 13px;
+  padding: 15px 17px;
+}
+
+.stats-page .stat-card > span {
+  font-size: 10px;
 }
 
 .stats-page .stat-card--wide {
@@ -490,15 +499,32 @@ h1 span {
 }
 
 .stats-page .stat-card strong {
-  font-size: 26px;
+  font-size: clamp(34px, 2vw, 42px);
 }
 
 .stats-page .stat-card--wide strong {
-  font-size: 38px;
+  font-size: clamp(46px, 2.8vw, 58px);
+}
+
+.stats-page .stat-card small {
+  font-size: 11px;
 }
 
 .stats-page .stat-panel {
-  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 14px;
+}
+
+.stats-page .stat-panel > header {
+  flex: 0 0 auto;
+  margin-bottom: 9px;
+  font-size: 10px;
+}
+
+.stats-page .stat-panel > header strong {
+  font-size: 11px;
 }
 
 .stats-page .stat-panel--chart {
@@ -523,23 +549,46 @@ h1 span {
   grid-column: 1 / -1;
 }
 
-.stats-page .chart-wrap,
+.stats-page .stat-panel--chart .chart-wrap,
+.stats-page .stat-panel--hourly .chart-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 90px;
+}
+
 .stats-page #activityChart,
 .stats-page #hourlyChart {
-  height: 92px;
+  height: 100%;
+  min-height: 90px;
+}
+
+.stats-page .bar-list {
+  flex: 1 1 auto;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.stats-page .bar-label,
+.stats-page .bar-value {
+  font-size: 11px;
+}
+
+.stats-page .bar-track {
+  height: 8px;
 }
 
 .chart-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 3px;
+  margin-top: 6px;
   color: var(--dim);
-  font: 7px var(--mono);
+  font: 9px var(--mono);
 }
 
 .stats-page .antenna-grid {
   grid-template-columns: repeat(5, max-content minmax(0, 1fr));
-  gap: 4px 14px;
+  gap: 6px 18px;
+  font-size: 10px;
 }
 
 .stats-page .stats-note {
@@ -945,14 +994,14 @@ h1 span {
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 10px;
 }
 
 .stat-card {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 8px 9px;
+  padding: 12px 14px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -964,33 +1013,33 @@ h1 span {
 
 .stat-card > span {
   color: var(--dim);
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.09em;
 }
 
 .stat-card strong {
-  margin: 3px 0 2px;
+  margin: 5px 0 3px;
   color: #f0f7fd;
-  font: 700 22px/1 var(--mono);
+  font: 700 30px/1 var(--mono);
 }
 
 .stat-card--wide strong {
   color: var(--accent-soft);
-  font-size: 34px;
+  font-size: 44px;
 }
 
 .stat-card small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .stat-panel {
   flex: 0 0 auto;
-  padding: 8px 9px;
+  padding: 12px 14px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -1001,26 +1050,26 @@ h1 span {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   color: var(--dim);
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.09em;
 }
 
 .stat-panel > header strong {
   color: var(--accent-soft);
-  font: 600 8px var(--mono);
+  font: 600 10px var(--mono);
   letter-spacing: 0.04em;
 }
 
 .stat-panel > header > span:last-child {
   color: var(--muted);
-  font: 600 7px var(--mono);
+  font: 600 9px var(--mono);
 }
 
 .chart-wrap {
-  height: 64px;
+  height: 100px;
   border-bottom: 1px solid var(--line);
   background: rgba(8, 14, 20, 0.4);
 }
@@ -1029,7 +1078,7 @@ h1 span {
 #hourlyChart {
   display: block;
   width: 100%;
-  height: 64px;
+  height: 100px;
 }
 
 .chart-grid {
@@ -1054,50 +1103,50 @@ h1 span {
 .bar-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .bar-row {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 24px;
+  grid-template-columns: 50px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .bar-label {
   overflow: hidden;
   color: var(--muted);
-  font: 500 8px var(--mono);
+  font: 500 10px var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .bar-track {
-  height: 5px;
+  height: 7px;
   overflow: hidden;
   background: var(--line-soft);
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 .bar-fill {
   display: block;
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: 3px;
   transition: width 0.2s linear;
 }
 
 .bar-value {
   color: var(--text);
-  font: 500 8px var(--mono);
+  font: 500 10px var(--mono);
   text-align: right;
 }
 
 .bar-empty {
   margin: 2px 0;
   color: var(--dim);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.06em;
   text-align: center;
 }
@@ -1105,9 +1154,9 @@ h1 span {
 .antenna-grid {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 3px 9px;
+  gap: 5px 12px;
   margin: 0;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .antenna-grid dt {
@@ -1118,16 +1167,16 @@ h1 span {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font: 500 8px var(--mono);
+  font: 500 10px var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .stats-note {
-  margin: 5px 0 0;
+  margin: 6px 0 0;
   color: var(--dim);
-  font-size: 7px;
-  line-height: 1.35;
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .stats-note.is-off {
@@ -1410,7 +1459,13 @@ h1 span {
   }
 
   .stats-page {
+    display: block;
     padding: 12px;
+  }
+
+  .stats-page .stats-view {
+    grid-template-rows: auto;
+    min-height: 0;
   }
 
   .stats-page .stat-cards {
@@ -1428,6 +1483,21 @@ h1 span {
   .stats-page .stat-panel--altitude,
   .stats-page .stat-panel--types {
     grid-column: 1 / -1;
+  }
+
+  .stats-page .stat-panel--chart .chart-wrap,
+  .stats-page .stat-panel--hourly .chart-wrap {
+    flex: none;
+    height: 130px;
+  }
+
+  .stats-page #activityChart,
+  .stats-page #hourlyChart {
+    height: 130px;
+  }
+
+  .stats-page .bar-list {
+    gap: 8px;
   }
 
   .stats-page .antenna-grid {
