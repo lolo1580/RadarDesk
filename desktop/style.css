@@ -458,12 +458,44 @@ h1 span {
   letter-spacing: -0.01em;
 }
 
+.stats-page-tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .stats-page-sub {
   margin: 0;
   color: var(--dim);
   font-size: 10px;
   letter-spacing: 0.05em;
   text-align: right;
+}
+
+.stats-period {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--dim);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.stats-period select {
+  padding: 5px 7px;
+  color: var(--accent-soft);
+  font: 600 10px var(--mono);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.stats-period select:focus-visible {
+  border-color: var(--accent);
 }
 
 .stats-page .stats-view {
@@ -571,6 +603,15 @@ h1 span {
   flex: 1 1 auto;
   justify-content: space-between;
   gap: 5px;
+}
+
+.stats-page .stat-panel--registrations .bar-list {
+  justify-content: flex-start;
+  min-height: 0;
+  padding-right: 4px;
+  overflow-y: auto;
+  scrollbar-color: var(--line) transparent;
+  scrollbar-width: thin;
 }
 
 .stats-page .bar-label,
@@ -1521,6 +1562,10 @@ h1 span {
     gap: 8px;
   }
 
+  .stats-page .stat-panel--registrations .bar-list {
+    max-height: 420px;
+  }
+
   .stats-page .antenna-grid {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -1528,7 +1573,13 @@ h1 span {
   .stats-page-head {
     align-items: flex-start;
     flex-direction: column;
-    gap: 4px;
+    gap: 10px;
+  }
+
+  .stats-page-tools {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .stats-page-sub {

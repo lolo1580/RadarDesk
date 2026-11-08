@@ -272,6 +272,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_STATS_DB_PATH` | `/stats/adsb-stats.db` | Base SQLite dans le volume `stats_data` |
 | `ADSB_STATS_SAMPLE_SECONDS` | `30` | Intervalle d'échantillonnage du collecteur (s) |
 | `ADSB_STATS_RETENTION_DAYS` | `180` | Conservation de l'historique (jours) |
+| `ADSB_STATS_PASS_GAP_SECONDS` | `1800` | Délai (s) au-delà duquel un retour compte comme un nouveau passage |
 | `ADSB_INFLUX_ENABLED` | `false` | Active l'export InfluxDB v2 |
 | `ADSB_INFLUX_URL` | — | URL de base InfluxDB, ex. `http://influxdb:8086` |
 | `ADSB_INFLUX_ORG` | — | Organisation InfluxDB |
@@ -388,13 +389,18 @@ cache court côté backend.
 
 Résumé des statistiques SQLite pour le jour UTC courant et le centre d'antenne
 actif. `range_nm` sélectionne la portée du comptage ; `days` contrôle
-l'historique journalier (1–90 jours) et `minutes` la fenêtre du graphique.
+l'historique journalier (1–90 jours), `minutes` la fenêtre du graphique et
+`registration_days` la période de cumul des immatriculations (1–180 jours par
+défaut, selon la rétention).
 
 La réponse contient notamment :
 
 - `samples`, `observations`, `peak`, `average`, `unique` ;
 - `registrations` : immatriculations distinctes connues aujourd'hui ;
-- `top_registrations` : immatriculations les plus souvent contactées ;
+- `registrations_period`, `registration_passes` et `registration_days` :
+  total sur la période de cumul demandée ;
+- `top_registrations` : immatriculations les plus fréquentes sur la période,
+  avec le nombre de passages et de jours actifs ;
 - `recent` : agrégats par minute sur la fenêtre demandée ;
 - `hours` : 24 agrégats horaires ;
 - `daily` : uniques et pics des derniers jours ;
@@ -402,7 +408,10 @@ La réponse contient notamment :
 
 Les comptages sont séparés par centre d'antenne et par portée. Un aéronef
 compte comme unique pour une portée s'il a été vu au moins une fois dans cette
-portée pendant la journée.
+portée pendant la journée. Un **passage** est compté lorsqu'un aéronef
+réapparaît après au moins `ADSB_STATS_PASS_GAP_SECONDS` sans réception
+(30 minutes par défaut) ; les échantillons successifs d'une même visite ne
+gonflent donc pas le compteur.
 
 ### `GET /api/widgets/homepage?range_nm=50`
 
@@ -474,8 +483,11 @@ centre/portée affichée. Le collecteur backend échantillonne l'antenne même
 lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
 du volume Docker `radardesk_stats_data`. La vue `STATISTIQUES` regroupe les
 indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions, le
-top des immatriculations et le panneau `ANTENNE RX` ; la vue `CARTE` reste
-centrée sur la carte et la flotte.
+top des immatriculations avec cumul jour / semaine / mois / 180 jours et le
+panneau `ANTENNE RX` ; la vue `CARTE` reste centrée sur la carte et la flotte.
+Le panneau des immatriculations affiche les 200 immatriculations les plus
+fréquentes sur la période sélectionnée, avec le nombre de passages ; la liste
+est défilable.
 Sur les grands écrans, la vue statistiques occupe toute la hauteur disponible ;
 sur les résolutions plus basses, elle défile verticalement sans compresser les
 panneaux.

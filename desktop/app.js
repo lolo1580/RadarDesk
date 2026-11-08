@@ -86,6 +86,8 @@
     typeBars: document.getElementById("typeBars"),
     typesTotal: document.getElementById("typesTotal"),
     registrationBars: document.getElementById("registrationBars"),
+    registrationPasses: document.getElementById("registrationPasses"),
+    registrationPeriod: document.getElementById("registrationPeriod"),
     dailyBars: document.getElementById("dailyBars"),
     antennaMode: document.getElementById("antennaMode"),
     antennaCenter: document.getElementById("antennaCenter"),
@@ -125,6 +127,7 @@
     statsSummary: null,
     statsFetchedAt: 0,
     statsRequestSeq: 0,
+    registrationDays: 1,
     search: "",
     filter: "all",
     sortKey: "distance",
@@ -1219,8 +1222,15 @@
     }
     return summary.top_registrations.map((item) => ({
       label: item.registration || "—",
-      count: Number(item.observations) || 0,
+      count: Number(item.passes ?? item.observations) || 0,
     }));
+  }
+
+  function registrationPeriodLabel(days) {
+    if (days >= 180) return "180 j";
+    if (days >= 30) return "30 j";
+    if (days >= 7) return "7 j";
+    return "aujourd'hui";
   }
 
   function renderDailyBars() {
@@ -1282,10 +1292,24 @@
         ? `depuis ${formatUtcTime(server.first_ts * 1000)} UTC`
         : "depuis —",
     );
-    setText(dom.statRegistrations, String(Number(server?.registrations ?? 0)));
+    const registrationDays = Number(
+      server?.registration_days ?? state.registrationDays ?? 1,
+    );
+    setText(
+      dom.statRegistrations,
+      String(Number(server?.registrations_period ?? server?.registrations ?? 0)),
+    );
+    const registrationPasses = Number(server?.registration_passes ?? 0);
     setText(
       dom.statRegistrationDetail,
-      server ? `sur ${Number(server.unique ?? 0)} adresses ICAO` : "aujourd'hui",
+      server
+        ? `${registrationPasses.toLocaleString("fr-FR")} passages · ` +
+          registrationPeriodLabel(registrationDays)
+        : "aujourd'hui",
+    );
+    setText(
+      dom.registrationPasses,
+      `${registrationPasses.toLocaleString("fr-FR")} PASSAGES`,
     );
     setText(dom.statPeak, pad2(server?.peak ?? 0));
     setText(
@@ -1358,7 +1382,8 @@
     const requestedRange = Math.round(state.rangeNm);
     try {
       const response = await fetchWithTimeout(
-        `/api/stats/summary?days=7&minutes=60&range_nm=${requestedRange}`,
+        `/api/stats/summary?days=7&minutes=60&range_nm=${requestedRange}` +
+          `&registration_days=${state.registrationDays}`,
         { cache: "no-store" },
         8000,
       );
@@ -1384,6 +1409,19 @@
     ensureActivityChart();
     dom.mapViewBtn.addEventListener("click", () => setMainView("map"));
     dom.statsViewBtn.addEventListener("click", () => setMainView("stats"));
+    if (dom.registrationPeriod) {
+      state.registrationDays = Math.max(
+        1,
+        Number(dom.registrationPeriod.value) || 1,
+      );
+      dom.registrationPeriod.addEventListener("change", () => {
+        state.registrationDays = Math.max(
+          1,
+          Number(dom.registrationPeriod.value) || 1,
+        );
+        loadServerStats();
+      });
+    }
     setMainView("map");
     renderStats();
     loadServerStats();

@@ -165,7 +165,18 @@
           <p class="eyebrow">ANALYSE</p>
           <h2>Statistiques de réception</h2>
         </div>
-        <p class="stats-page-sub">SQLite · historique 7 jours · compteurs serveur</p>
+        <div class="stats-page-tools">
+          <label class="stats-period">
+            <span>CUMUL IMMAT.</span>
+            <select id="registrationPeriod" aria-label="Période de cumul des immatriculations">
+              <option value="1">JOUR</option>
+              <option value="7">SEMAINE</option>
+              <option value="30">MOIS</option>
+              <option value="180">180 JOURS</option>
+            </select>
+          </label>
+          <p class="stats-page-sub">SQLite · historique 7 jours · compteurs serveur</p>
+        </div>
       </header>
 
       <section class="stats-view stats-view--page" id="statsView">
@@ -248,7 +259,10 @@
         </div>
 
         <div class="stat-panel stat-panel--registrations">
-          <header><span>TOP IMMATRICULATIONS</span><span>CONTACTS</span></header>
+          <header>
+            <span>TOP IMMATRICULATIONS</span>
+            <span id="registrationPasses">— PASSAGES</span>
+          </header>
           <div class="bar-list" id="registrationBars"></div>
         </div>
 

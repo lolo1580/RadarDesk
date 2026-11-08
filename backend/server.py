@@ -126,11 +126,18 @@ STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
 STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
 STATS_SAMPLE_SECONDS = int(os.getenv("ADSB_STATS_SAMPLE_SECONDS", "30"))
 STATS_RETENTION_DAYS = int(os.getenv("ADSB_STATS_RETENTION_DAYS", "180"))
+# Un nouvel échantillon séparé de plus de ce délai compte comme un nouveau
+# passage de l'aéronef, et non comme la continuation du précédent.
+STATS_PASS_GAP_SECONDS = int(os.getenv("ADSB_STATS_PASS_GAP_SECONDS", "1800"))
 STATS_RANGE_STEPS = (5, 10, 25, 50, 75, 100, 125, 150, 200, 250)
 if not 5 <= STATS_SAMPLE_SECONDS <= 3600:
     raise RuntimeError("ADSB_STATS_SAMPLE_SECONDS doit être compris entre 5 et 3600.")
 if not 1 <= STATS_RETENTION_DAYS <= 3650:
     raise RuntimeError("ADSB_STATS_RETENTION_DAYS doit être compris entre 1 et 3650.")
+if not 60 <= STATS_PASS_GAP_SECONDS <= 86_400:
+    raise RuntimeError(
+        "ADSB_STATS_PASS_GAP_SECONDS doit être compris entre 60 et 86400."
+    )
 
 # Export InfluxDB v2 (optionnel, surchargeable dans l'administration).
 INFLUX_ENABLED = _env_flag("ADSB_INFLUX_ENABLED", False)
@@ -959,14 +966,16 @@ def _stats_schema() -> None:
                 max_alt INTEGER,
                 min_distance REAL,
                 observations INTEGER NOT NULL DEFAULT 0,
+                passes INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(day, scope, hex)
             );
             CREATE INDEX IF NOT EXISTS idx_aircraft_seen_day_scope
                 ON aircraft_seen(day, scope);
             """
         )
-        # Migration non destructive des bases v3 déjà remplies : les colonnes
-        # d'immatriculation sont ajoutées sans perdre l'historique existant.
+        # Migration non destructive des bases déjà remplies : les colonnes
+        # d'immatriculation et de passages sont ajoutées sans perdre
+        # l'historique existant.
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(aircraft_seen)")
         }
@@ -976,13 +985,26 @@ def _stats_schema() -> None:
             conn.execute(
                 "ALTER TABLE aircraft_seen ADD COLUMN observations INTEGER NOT NULL DEFAULT 0"
             )
+        if "passes" not in columns:
+            conn.execute(
+                "ALTER TABLE aircraft_seen ADD COLUMN passes INTEGER NOT NULL DEFAULT 0"
+            )
+            # Les lignes historiques n'ont pas de découpage de passages : on
+            # compte au minimum un passage par aéronef et par jour.
+            conn.execute("UPDATE aircraft_seen SET passes = 1 WHERE passes = 0")
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_aircraft_seen_day_scope_reg
                 ON aircraft_seen(day, scope, registration)
             """
         )
-        conn.execute("PRAGMA user_version = 4")
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aircraft_seen_scope_hex
+                ON aircraft_seen(scope, hex)
+            """
+        )
+        conn.execute("PRAGMA user_version = 5")
         conn.commit()
 
 
@@ -1114,11 +1136,12 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                     else None
                 )
                 conn.execute(
-                    """
+                    f"""
                     INSERT INTO aircraft_seen
                         (day, scope, hex, first_seen, last_seen, callsign,
-                         registration, type, max_alt, min_distance, observations)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                         registration, type, max_alt, min_distance, observations,
+                         passes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                     ON CONFLICT(day, scope, hex) DO UPDATE SET
                         last_seen = excluded.last_seen,
                         callsign = COALESCE(excluded.callsign, aircraft_seen.callsign),
@@ -1136,7 +1159,12 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                             WHEN aircraft_seen.min_distance IS NULL THEN excluded.min_distance
                             ELSE MIN(aircraft_seen.min_distance, excluded.min_distance)
                         END,
-                        observations = aircraft_seen.observations + 1
+                        observations = aircraft_seen.observations + 1,
+                        passes = aircraft_seen.passes + CASE
+                            WHEN excluded.last_seen - aircraft_seen.last_seen
+                                 > {STATS_PASS_GAP_SECONDS}
+                            THEN 1 ELSE 0
+                        END
                     """,
                     (
                         day,
@@ -1151,6 +1179,18 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                         round(distance, 2),
                     ),
                 )
+                if target.registration:
+                    # Complète les jours antérieurs du même aéronef dès que
+                    # son immatriculation est connue, sans écraser une valeur
+                    # déjà enregistrée.
+                    conn.execute(
+                        """
+                        UPDATE aircraft_seen
+                        SET registration = ?
+                        WHERE scope = ? AND hex = ? AND registration IS NULL
+                        """,
+                        (target.registration, scope, str(target.hex).lower()),
+                    )
             unique_default = conn.execute(
                 """
                 SELECT COUNT(*) FROM aircraft_seen
@@ -1161,6 +1201,14 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
             unique_registrations_default = conn.execute(
                 """
                 SELECT COUNT(DISTINCT registration) FROM aircraft_seen
+                WHERE day = ? AND scope = ? AND min_distance <= ?
+                  AND registration IS NOT NULL AND registration <> ''
+                """,
+                (day, scope, default_range),
+            ).fetchone()[0]
+            registration_passes_default = conn.execute(
+                """
+                SELECT COALESCE(SUM(passes), 0) FROM aircraft_seen
                 WHERE day = ? AND scope = ? AND min_distance <= ?
                   AND registration IS NOT NULL AND registration <> ''
                 """,
@@ -1182,6 +1230,7 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
         "default_range_nm": default_range,
         "unique_default": int(unique_default),
         "unique_registrations_default": int(unique_registrations_default),
+        "registration_passes_default": int(registration_passes_default),
         "source": snapshot.source,
         "center_lat": LAT,
         "center_lon": LON,
@@ -1195,6 +1244,7 @@ def stats_summary(
     days: int,
     minutes: int,
     requested_range: int | None = None,
+    registration_days: int = 1,
 ) -> dict[str, Any]:
     scope = _stats_scope()
     range_nm = _effective_stats_range(requested_range)
@@ -1202,6 +1252,14 @@ def stats_summary(
     now = int(time.time())
     recent_start = (now // 60 - (minutes - 1)) * 60
     today = datetime.now(UTC).date()
+    registration_days = max(1, int(registration_days))
+    try:
+        period_end = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        period_end = today
+    period_start = (
+        period_end - timedelta(days=registration_days - 1)
+    ).strftime("%Y-%m-%d")
     first_daily_day = today - timedelta(days=days - 1)
     daily_start = first_daily_day.strftime("%Y-%m-%d")
     daily_days = [
@@ -1235,17 +1293,41 @@ def stats_summary(
             """,
             (day, scope, range_nm),
         ).fetchone()[0]
+        period_totals = conn.execute(
+            """
+            SELECT COUNT(DISTINCT hex) AS unique_count,
+                   COUNT(DISTINCT CASE
+                       WHEN registration IS NOT NULL AND registration <> ''
+                       THEN registration
+                   END) AS registration_count,
+                   COALESCE(SUM(CASE
+                       WHEN registration IS NOT NULL AND registration <> ''
+                       THEN passes ELSE 0
+                   END), 0) AS pass_count
+            FROM aircraft_seen
+            WHERE scope = ? AND day >= ? AND day <= ? AND min_distance <= ?
+            """,
+            (scope, period_start, day, range_nm),
+        ).fetchone()
         top_registration_rows = conn.execute(
             """
-            SELECT registration, callsign, type, observations, max_alt,
-                   min_distance, first_seen, last_seen
+            SELECT registration,
+                   SUM(passes) AS passes,
+                   COUNT(DISTINCT day) AS active_days,
+                   SUM(observations) AS observations,
+                   MAX(callsign) AS callsign,
+                   MAX(type) AS type,
+                   MIN(first_seen) AS first_seen,
+                   MAX(last_seen) AS last_seen,
+                   MIN(min_distance) AS min_distance
             FROM aircraft_seen
-            WHERE day = ? AND scope = ? AND min_distance <= ?
+            WHERE scope = ? AND day >= ? AND day <= ? AND min_distance <= ?
               AND registration IS NOT NULL AND registration <> ''
-            ORDER BY observations DESC, last_seen DESC
-            LIMIT 8
+            GROUP BY registration
+            ORDER BY passes DESC, last_seen DESC
+            LIMIT 200
             """,
-            (day, scope, range_nm),
+            (scope, period_start, day, range_nm),
         ).fetchall()
         recent_rows = conn.execute(
             """
@@ -1403,13 +1485,18 @@ def stats_summary(
         "average": round(observations / samples, 2) if samples else 0.0,
         "unique": int(unique),
         "registrations": int(registrations),
+        "unique_period": int(period_totals["unique_count"] or 0),
+        "registrations_period": int(period_totals["registration_count"] or 0),
+        "registration_passes": int(period_totals["pass_count"] or 0),
+        "registration_days": int(registration_days),
         "top_registrations": [
             {
                 "registration": row["registration"],
+                "passes": int(row["passes"] or 0),
+                "active_days": int(row["active_days"] or 0),
+                "observations": int(row["observations"] or 0),
                 "callsign": row["callsign"],
                 "type": row["type"],
-                "observations": int(row["observations"] or 0),
-                "max_alt": row["max_alt"],
                 "min_distance": row["min_distance"],
                 "first_seen": int(row["first_seen"]),
                 "last_seen": int(row["last_seen"]),
@@ -1431,16 +1518,17 @@ async def cached_stats_summary(
     days: int,
     minutes: int,
     requested_range: int | None = None,
+    registration_days: int = 1,
 ) -> dict[str, Any]:
     scope = _stats_scope()
-    key = (day, days, minutes, requested_range, scope)
+    key = (day, days, minutes, requested_range, registration_days, scope)
     now = time.monotonic()
     async with _stats_summary_lock:
         cached = _stats_summary_cache.get(key)
         if cached is not None and now - cached[0] <= _STATS_SUMMARY_CACHE_TTL_S:
             return cached[1]
     result = await asyncio.to_thread(
-        stats_summary, day, days, minutes, requested_range
+        stats_summary, day, days, minutes, requested_range, registration_days
     )
     async with _stats_summary_lock:
         _stats_summary_cache[key] = (time.monotonic(), result)
@@ -1526,6 +1614,8 @@ def _influx_line(record: dict[str, Any]) -> str:
         f"unique_today={int(record.get('unique_default') or 0)}i",
         f"unique_registrations_today="
         f"{int(record.get('unique_registrations_default') or 0)}i",
+        f"registration_passes_today="
+        f"{int(record.get('registration_passes_default') or 0)}i",
     ]
     if entry.get("max_alt") is not None:
         fields.append(f"max_alt_ft={int(entry['max_alt'])}i")
@@ -1758,6 +1848,7 @@ async def api_stats_summary(
     days: int = Query(default=7, ge=1, le=90),
     minutes: int = Query(default=60, ge=10, le=1440),
     range_nm: int | None = Query(default=None, ge=1, le=250),
+    registration_days: int = Query(default=1, ge=1, le=3650),
 ) -> dict[str, Any]:
     """Résumé des statistiques persistantes pour le jour et la portée actifs."""
     requested_day = day or datetime.now(UTC).strftime("%Y-%m-%d")
@@ -1779,6 +1870,12 @@ async def api_stats_summary(
             "peak": 0,
             "average": 0.0,
             "unique": 0,
+            "registrations": 0,
+            "unique_period": 0,
+            "registrations_period": 0,
+            "registration_passes": 0,
+            "registration_days": int(registration_days),
+            "top_registrations": [],
             "first_ts": None,
             "last_ts": None,
             "last": None,
@@ -1791,7 +1888,11 @@ async def api_stats_summary(
         }
     try:
         return await cached_stats_summary(
-            requested_day, days, minutes, requested_range
+            requested_day,
+            days,
+            minutes,
+            requested_range,
+            registration_days,
         )
     except (OSError, sqlite3.Error) as exc:
         logger.error("Lecture des statistiques impossible: %s", exc)
