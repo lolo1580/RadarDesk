@@ -480,21 +480,30 @@ Le port est configurable avec `ADSB_DESKTOP_PORT`.
 Le service `admin` est séparé du backend radar :
 
 - interface web moderne sombre et responsive sur `http://<hôte>:8082`,
-  organisée en sections avec tableau de bord d'état ;
+  organisée en trois tâches distinctes accessibles depuis le menu latéral :
+  **Vue d'ensemble**, **Récepteur** et **Statistiques & InfluxDB** ;
 - HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
-- état du radar : source, cache, nombre de cibles, configuration active ;
-- modification à chaud de la position (coordonnées GPS ou code OACI), des
-  portées, du cache, de la cadence, des sources ADS-B et de la source METAR.
+- **Vue d'ensemble** : état du radar (liaison, source, cache, cibles,
+  configuration active, base SQLite, InfluxDB), raccourcis vers les tâches et
+  actions globales **Recharger** / **Réinitialiser** ;
+- **Récepteur** : formulaire dédié à la position (coordonnées GPS ou code
+  OACI), aux portées, au cache, à la cadence, aux sources ADS-B et à la source
+  METAR, avec un bouton **Appliquer** qui ne modifie pas l'export InfluxDB.
   En mode OACI, le HUD radar affiche le code de l'aéroport (`· LSGG`) et
   l'aéroport le plus proche passe à `0.0 NM` ;
+- **Statistiques & InfluxDB** : formulaire d'export séparé (URL, organisation,
+  bucket, token, mesure et intervalle), boutons **Appliquer l'export** et
+  **Tester InfluxDB**, plus une carte de maintenance **Effacer l'historique**.
+  Appliquer l'export ne modifie pas la configuration du récepteur ;
+- les valeurs non appliquées d'un formulaire sont conservées lorsqu'on
+  enregistre l'autre tâche ; les actions globales restent explicites dans la
+  vue d'ensemble ;
 - le panneau du radar affiche par défaut l'aéroport le plus proche des
   coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
 - persistance dans le volume Docker `radardesk_admin_data` ;
-- configuration InfluxDB v2 : URL, organisation, bucket, token, mesure et
-  intervalle d'export, avec bouton de test d'écriture. L'export utilise la
-  portée par défaut configurée pour l'antenne ;
-- bouton **EFFACER L'HISTORIQUE** pour vider la base SQLite des statistiques ;
-- boutons **Recharger** et **Réinitialiser** vers les variables d'environnement.
+- l'export InfluxDB v2 utilise la portée par défaut configurée pour l'antenne ;
+- le bouton **EFFACER L'HISTORIQUE** vide uniquement la base SQLite des
+  statistiques, sans toucher aux données déjà écrites dans InfluxDB.
 
 Les modifications sont appliquées sans redémarrage du backend. En cas de
 redémarrage du backend, la configuration runtime est relue depuis le volume.

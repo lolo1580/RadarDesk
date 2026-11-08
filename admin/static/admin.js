@@ -2,7 +2,9 @@
   "use strict";
 
   const dom = {
-    form: document.getElementById("configForm"),
+    radarForm: document.getElementById("configForm"),
+    influxForm: document.getElementById("influxForm"),
+    pageTitle: document.getElementById("pageTitle"),
     desktopLink: document.getElementById("desktopLink"),
     radarLink: document.getElementById("radarLink"),
     linkState: document.getElementById("linkState"),
@@ -22,8 +24,11 @@
     influxState: document.getElementById("influxState"),
     influxDetail: document.getElementById("influxDetail"),
     message: document.getElementById("message"),
+    influxMessage: document.getElementById("influxMessage"),
+    overviewMessage: document.getElementById("overviewMessage"),
     lastRefresh: document.getElementById("lastRefresh"),
     saveBtn: document.getElementById("saveBtn"),
+    saveInfluxBtn: document.getElementById("saveInfluxBtn"),
     reloadBtn: document.getElementById("reloadBtn"),
     resetBtn: document.getElementById("resetBtn"),
     influxEnabled: document.getElementById("influx_enabled"),
@@ -52,6 +57,7 @@
 
   let formLoaded = false;
   let busy = false;
+  let currentConfig = null;
   let pollTimer = 0;
   const airportsByIcao = new Map();
   let selectedAirportIcao = null;
@@ -62,9 +68,22 @@
     }
   }
 
+  function setMessageNode(node, text, kind = "") {
+    if (!node) return;
+    setText(node, text);
+    node.className = `message${kind ? ` is-${kind}` : ""}`;
+  }
+
   function setMessage(text, kind = "") {
-    setText(dom.message, text);
-    dom.message.className = `message${kind ? ` is-${kind}` : ""}`;
+    setMessageNode(dom.message, text, kind);
+  }
+
+  function setInfluxMessage(text, kind = "") {
+    setMessageNode(dom.influxMessage, text, kind);
+  }
+
+  function setOverviewMessage(text, kind = "") {
+    setMessageNode(dom.overviewMessage, text, kind);
   }
 
   function errorDetail(payload, status) {
@@ -105,6 +124,7 @@
     busy = value;
     for (const button of [
       dom.saveBtn,
+      dom.saveInfluxBtn,
       dom.reloadBtn,
       dom.resetBtn,
       dom.testInfluxBtn,
@@ -129,10 +149,10 @@
 
   function updateLocationHint() {
     const hint = document.getElementById("locationHint");
-    const mode = dom.form.elements.namedItem("location_mode").value;
-    const airportSearch = dom.form.elements.namedItem("airport_search");
-    const lat = dom.form.elements.namedItem("lat");
-    const lon = dom.form.elements.namedItem("lon");
+    const mode = dom.radarForm.elements.namedItem("location_mode").value;
+    const airportSearch = dom.radarForm.elements.namedItem("airport_search");
+    const lat = dom.radarForm.elements.namedItem("lat");
+    const lon = dom.radarForm.elements.namedItem("lon");
     if (!hint) {
       return;
     }
@@ -150,12 +170,12 @@
   }
 
   function syncLocationMode() {
-    const mode = dom.form.elements.namedItem("location_mode").value;
+    const mode = dom.radarForm.elements.namedItem("location_mode").value;
     const airportMode = mode === "airport";
     const airportField = document.getElementById("airportField");
-    const airportSearch = dom.form.elements.namedItem("airport_search");
-    const lat = dom.form.elements.namedItem("lat");
-    const lon = dom.form.elements.namedItem("lon");
+    const airportSearch = dom.radarForm.elements.namedItem("airport_search");
+    const lat = dom.radarForm.elements.namedItem("lat");
+    const lon = dom.radarForm.elements.namedItem("lon");
 
     if (airportField) {
       airportField.hidden = !airportMode;
@@ -202,22 +222,22 @@
     }
   }
 
-  function fillConfig(config) {
+  function fillRadarFields(config) {
     if (!config) {
       return;
     }
 
     for (const name of numericFields) {
-      const field = dom.form.elements.namedItem(name);
+      const field = dom.radarForm.elements.namedItem(name);
       if (field && config[name] !== undefined && config[name] !== null) {
         field.value = String(config[name]);
       }
     }
 
-    const locationMode = dom.form.elements.namedItem("location_mode");
-    const airportSearch = dom.form.elements.namedItem("airport_search");
-    const latField = dom.form.elements.namedItem("lat");
-    const lonField = dom.form.elements.namedItem("lon");
+    const locationMode = dom.radarForm.elements.namedItem("location_mode");
+    const airportSearch = dom.radarForm.elements.namedItem("airport_search");
+    const latField = dom.radarForm.elements.namedItem("lat");
+    const lonField = dom.radarForm.elements.namedItem("lon");
     const mode = config.location_mode === "airport" ? "airport" : "coords";
     selectedAirportIcao = config.airport_icao || null;
     if (locationMode) {
@@ -240,10 +260,10 @@
     }
     syncLocationMode();
 
-    const primary = dom.form.elements.namedItem("primary_provider");
-    const fallback = dom.form.elements.namedItem("fallback_provider");
-    const radarStyle = dom.form.elements.namedItem("radar_style");
-    const weatherMetar = dom.form.elements.namedItem("weather_metar_provider");
+    const primary = dom.radarForm.elements.namedItem("primary_provider");
+    const fallback = dom.radarForm.elements.namedItem("fallback_provider");
+    const radarStyle = dom.radarForm.elements.namedItem("radar_style");
+    const weatherMetar = dom.radarForm.elements.namedItem("weather_metar_provider");
     const metarOption = weatherMetar?.querySelector('option[value="metar_taf"]');
     const checkwxOption = weatherMetar?.querySelector('option[value="checkwx"]');
     const metarConfigured = Boolean(config.metar_taf_configured);
@@ -281,7 +301,10 @@
         ? `Fournisseurs avec clé configurée : ${configured.join(", ")}.`
         : "metar-taf.com et CheckWX indisponibles : renseigner METAR_TAF_API_KEY ou CHECKWX_API_KEY dans .env puis recréer le backend.";
     }
+  }
 
+  function fillInfluxFields(config) {
+    if (!config) return;
     if (dom.influxEnabled) {
       dom.influxEnabled.checked = Boolean(config.influx_enabled);
     }
@@ -306,7 +329,7 @@
         Boolean(config.influx_enabled) && !config.influx_token_configured,
       );
       dom.influxHint.textContent = config.influx_token_configured
-        ? "InfluxDB v2. Token déjà configuré : laisser le champ vide pour le conserver."
+        ? "InfluxDB v2. Token déjà configuré : laisser le champ vide pour le conserver. Le test utilise la configuration active."
         : "InfluxDB v2. Aucun token enregistré : renseigner un token avant d'activer l'export.";
     }
     if (dom.statsHint) {
@@ -315,7 +338,13 @@
         `échantillon ${Number(config.stats_sample_seconds || 30)} s · ` +
         `rétention ${Number(config.stats_retention_days || 180)} jours.`;
     }
+  }
 
+  function fillConfig(config) {
+    if (!config) return;
+    currentConfig = config;
+    fillRadarFields(config);
+    fillInfluxFields(config);
     const isRuntime = config.config_source === "runtime";
     setText(dom.configSource, isRuntime ? "RUNTIME" : "ENVIRONNEMENT");
     dom.configSource.classList.toggle("is-runtime", isRuntime);
@@ -470,22 +499,22 @@
     }
   }
 
-  function collectPayload() {
+  function radarPayloadFromForm() {
     const payload = {};
     for (const name of numericFields) {
-      const field = dom.form.elements.namedItem(name);
+      const field = dom.radarForm.elements.namedItem(name);
       payload[name] = Number(field.value);
     }
-    payload.primary_provider = dom.form.elements.namedItem("primary_provider").value;
-    payload.fallback_provider = dom.form.elements.namedItem("fallback_provider").value;
-    payload.weather_metar_provider = dom.form.elements.namedItem(
+    payload.primary_provider = dom.radarForm.elements.namedItem("primary_provider").value;
+    payload.fallback_provider = dom.radarForm.elements.namedItem("fallback_provider").value;
+    payload.weather_metar_provider = dom.radarForm.elements.namedItem(
       "weather_metar_provider",
     ).value;
-    payload.radar_style = dom.form.elements.namedItem("radar_style").value;
-    const mode = dom.form.elements.namedItem("location_mode").value;
+    payload.radar_style = dom.radarForm.elements.namedItem("radar_style").value;
+    const mode = dom.radarForm.elements.namedItem("location_mode").value;
     payload.location_mode = mode;
     if (mode === "airport") {
-      const airportSearch = dom.form.elements.namedItem("airport_search");
+      const airportSearch = dom.radarForm.elements.namedItem("airport_search");
       let airport = findAirport(airportSearch.value);
       if (!airport && selectedAirportIcao) {
         airport = airportsByIcao.get(selectedAirportIcao) || null;
@@ -497,12 +526,50 @@
       payload.airport_icao = airport[0];
       payload.lat = Number(airport[4]);
       payload.lon = Number(airport[5]);
-      dom.form.elements.namedItem("lat").value = String(airport[4]);
-      dom.form.elements.namedItem("lon").value = String(airport[5]);
+      dom.radarForm.elements.namedItem("lat").value = String(airport[4]);
+      dom.radarForm.elements.namedItem("lon").value = String(airport[5]);
     } else {
       payload.airport_icao = null;
     }
+    return payload;
+  }
 
+  function radarPayloadFromConfig(config) {
+    return {
+      lat: Number(config.lat),
+      lon: Number(config.lon),
+      dist_nm: Number(config.dist_nm),
+      max_radius_nm: Number(config.max_radius_nm),
+      refresh_ms: Number(config.refresh_ms),
+      cache_ttl_s: Number(config.cache_ttl_s),
+      stale_ttl_s: Number(config.stale_ttl_s),
+      primary_cooldown_s: Number(config.primary_cooldown_s),
+      primary_provider: config.primary_provider_key || config.primary_provider,
+      fallback_provider: config.fallback_provider_key || "none",
+      weather_metar_provider: config.weather_metar_provider,
+      radar_style: config.radar_style,
+      location_mode: config.location_mode || "coords",
+      airport_icao: config.airport_icao || null,
+    };
+  }
+
+  function collectRadarPayload() {
+    const payload = radarPayloadFromForm();
+    const base = currentConfig || {};
+    payload.influx_enabled = Boolean(base.influx_enabled);
+    payload.influx_url = base.influx_url || "";
+    payload.influx_org = base.influx_org || "";
+    payload.influx_bucket = base.influx_bucket || "";
+    payload.influx_measurement = base.influx_measurement || "adsb_stats";
+    payload.influx_interval_s = Number(base.influx_interval_s || 30);
+    return payload;
+  }
+
+  function collectInfluxPayload() {
+    if (!currentConfig) {
+      throw new Error("Configuration du récepteur non chargée : recharger la page.");
+    }
+    const payload = radarPayloadFromConfig(currentConfig);
     payload.influx_enabled = Boolean(dom.influxEnabled?.checked);
     payload.influx_url = dom.influxUrl?.value.trim() || "";
     payload.influx_org = dom.influxOrg?.value.trim() || "";
@@ -516,20 +583,18 @@
     return payload;
   }
 
-  async function saveConfig(event) {
+  async function saveRadarConfig(event) {
     event.preventDefault();
-    if (busy) {
-      return;
-    }
-    if (!dom.form.checkValidity()) {
-      dom.form.reportValidity();
+    if (busy) return;
+    if (!dom.radarForm.checkValidity()) {
+      dom.radarForm.reportValidity();
       setMessage("Vérifier les champs en rouge avant d'appliquer.", "error");
       return;
     }
 
     let payload;
     try {
-      payload = collectPayload();
+      payload = collectRadarPayload();
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : String(error),
@@ -539,7 +604,7 @@
     }
 
     setBusy(true);
-    setMessage("Application de la configuration…");
+    setMessage("Application de la configuration récepteur…");
     try {
       const result = await api("/api/config", {
         method: "PUT",
@@ -547,13 +612,59 @@
         body: JSON.stringify(payload),
       });
       if (result.config) {
-        fillConfig(result.config);
+        currentConfig = result.config;
+        fillRadarFields(currentConfig);
       }
       await loadStatus(false);
       window.setTimeout(() => loadStatus(false), 1200);
-      setMessage("Configuration appliquée et backend rechargé.", "success");
+      setMessage("Configuration récepteur appliquée.", "success");
     } catch (error) {
       setMessage(
+        `Échec : ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveInfluxConfig(event) {
+    event.preventDefault();
+    if (busy) return;
+    if (!dom.influxForm.checkValidity()) {
+      dom.influxForm.reportValidity();
+      setInfluxMessage("Vérifier les champs en rouge avant d'appliquer.", "error");
+      return;
+    }
+
+    let payload;
+    try {
+      payload = collectInfluxPayload();
+    } catch (error) {
+      setInfluxMessage(
+        error instanceof Error ? error.message : String(error),
+        "error",
+      );
+      return;
+    }
+
+    setBusy(true);
+    setInfluxMessage("Application des réglages InfluxDB…");
+    try {
+      const result = await api("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (result.config) {
+        currentConfig = result.config;
+        fillInfluxFields(currentConfig);
+      }
+      await loadStatus(false);
+      window.setTimeout(() => loadStatus(false), 1200);
+      setInfluxMessage("Réglages InfluxDB appliqués.", "success");
+    } catch (error) {
+      setInfluxMessage(
         `Échec : ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
@@ -567,7 +678,7 @@
       return;
     }
     setBusy(true);
-    setMessage("Rechargement du backend…");
+    setOverviewMessage("Rechargement du backend…");
     try {
       const result = await api("/api/reload", { method: "POST" });
       if (result.config) {
@@ -575,9 +686,9 @@
       }
       await loadStatus(false);
       window.setTimeout(() => loadStatus(false), 1200);
-      setMessage("Backend rechargé depuis le fichier runtime.", "success");
+      setOverviewMessage("Backend rechargé depuis le fichier runtime.", "success");
     } catch (error) {
-      setMessage(
+      setOverviewMessage(
         `Échec : ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
@@ -595,7 +706,7 @@
     }
 
     setBusy(true);
-    setMessage("Réinitialisation vers l'environnement…");
+    setOverviewMessage("Réinitialisation vers l'environnement…");
     try {
       const result = await api("/api/config/reset", { method: "POST" });
       if (result.config) {
@@ -603,9 +714,9 @@
       }
       await loadStatus(false);
       window.setTimeout(() => loadStatus(false), 1200);
-      setMessage("Configuration réinitialisée depuis l'environnement.", "success");
+      setOverviewMessage("Configuration réinitialisée depuis l'environnement.", "success");
     } catch (error) {
-      setMessage(
+      setOverviewMessage(
         `Échec : ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
@@ -617,16 +728,16 @@
   async function testInflux() {
     if (busy) return;
     setBusy(true);
-    setMessage("Test d'écriture InfluxDB avec la configuration active…");
+    setInfluxMessage("Test d'écriture InfluxDB avec la configuration active…");
     try {
       const result = await api("/api/influx/test", { method: "POST" });
       if (result.ok) {
-        setMessage("InfluxDB répond et accepte l'écriture de test.", "success");
+        setInfluxMessage("InfluxDB répond et accepte l'écriture de test.", "success");
       } else {
-        setMessage(`InfluxDB: ${result.detail || "échec du test"}`, "error");
+        setInfluxMessage(`InfluxDB: ${result.detail || "échec du test"}`, "error");
       }
     } catch (error) {
-      setMessage(
+      setInfluxMessage(
         `Échec : ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
@@ -645,15 +756,15 @@
       return;
     }
     setBusy(true);
-    setMessage("Effacement de l'historique…");
+    setInfluxMessage("Effacement de l'historique…");
     try {
       const result = await api("/api/stats/reset", { method: "POST" });
-      setMessage(
+      setInfluxMessage(
         `Historique effacé (${Number(result.deleted || 0)} relevé(s)).`,
         "success",
       );
     } catch (error) {
-      setMessage(
+      setInfluxMessage(
         `Échec : ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
@@ -670,14 +781,15 @@
     }, 5000);
   }
 
-  dom.form.addEventListener("submit", saveConfig);
+  dom.radarForm.addEventListener("submit", saveRadarConfig);
+  dom.influxForm.addEventListener("submit", saveInfluxConfig);
   dom.reloadBtn.addEventListener("click", reloadConfig);
   dom.resetBtn.addEventListener("click", resetConfig);
   dom.testInfluxBtn.addEventListener("click", testInflux);
   dom.resetStatsBtn.addEventListener("click", resetStats);
 
-  dom.form.elements.namedItem("location_mode").addEventListener("change", syncLocationMode);
-  const airportSearchField = dom.form.elements.namedItem("airport_search");
+  dom.radarForm.elements.namedItem("location_mode").addEventListener("change", syncLocationMode);
+  const airportSearchField = dom.radarForm.elements.namedItem("airport_search");
   const selectAirportFromInput = () => {
     const airport = findAirport(airportSearchField.value);
     if (!airport) {
@@ -686,33 +798,63 @@
     }
     selectedAirportIcao = airport[0];
     airportSearchField.value = airportLabel(airport);
-    dom.form.elements.namedItem("lat").value = String(airport[4]);
-    dom.form.elements.namedItem("lon").value = String(airport[5]);
+    dom.radarForm.elements.namedItem("lat").value = String(airport[4]);
+    dom.radarForm.elements.namedItem("lon").value = String(airport[5]);
     updateLocationHint();
   };
   airportSearchField.addEventListener("input", selectAirportFromInput);
   airportSearchField.addEventListener("change", selectAirportFromInput);
   for (const name of ["lat", "lon"]) {
-    dom.form.elements.namedItem(name).addEventListener("input", updateLocationHint);
+    dom.radarForm.elements.namedItem(name).addEventListener("input", updateLocationHint);
   }
 
-  function setupSideNav() {
-    const links = [...document.querySelectorAll(".side-nav a")];
-    const activate = (id) => {
-      for (const link of links) {
-        link.classList.toggle("is-active", link.getAttribute("href") === `#${id}`);
+  function setupTaskNav() {
+    const buttons = [...document.querySelectorAll(".side-nav button[data-panel]")];
+    const panels = [...document.querySelectorAll(".admin-panel[data-panel]")];
+    const titles = {
+      overview: "Vue d'ensemble",
+      radar: "Configuration du récepteur",
+      stats: "Statistiques & InfluxDB",
+    };
+    const showPanel = (name, updateHash = true) => {
+      const target = panels.find((panel) => panel.dataset.panel === name);
+      if (!target) return;
+      for (const panel of panels) {
+        panel.hidden = panel !== target;
+      }
+      for (const button of buttons) {
+        const active = button.dataset.panel === name;
+        button.classList.toggle("is-active", active);
+        if (active) {
+          button.setAttribute("aria-current", "page");
+        } else {
+          button.removeAttribute("aria-current");
+        }
+      }
+      setText(dom.pageTitle, titles[name] || titles.overview);
+      if (updateHash) {
+        window.history.replaceState(null, "", `#${name}`);
+        window.scrollTo({ top: 0, behavior: "auto" });
       }
     };
-    for (const link of links) {
-      link.addEventListener("click", () => activate(link.getAttribute("href").slice(1)));
+
+    for (const button of buttons) {
+      button.addEventListener("click", () => showPanel(button.dataset.panel));
     }
-    const hash = window.location.hash.slice(1);
-    if (hash && links.some((link) => link.getAttribute("href") === `#${hash}`)) {
-      activate(hash);
+    for (const link of document.querySelectorAll("[data-go]")) {
+      link.addEventListener("click", () => showPanel(link.dataset.go));
     }
+    window.addEventListener("hashchange", () => {
+      const name = window.location.hash.slice(1);
+      if (titles[name]) {
+        showPanel(name, false);
+      }
+    });
+    const initial = window.location.hash.slice(1);
+    showPanel(titles[initial] ? initial : "overview", false);
   }
 
-  setupSideNav();
+  setupTaskNav();
   loadAdminAirports().finally(() => loadStatus(true));
   scheduleStatusPoll();
 })();

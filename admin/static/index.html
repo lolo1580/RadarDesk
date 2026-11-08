@@ -19,14 +19,10 @@
         </div>
       </div>
 
-      <nav class="side-nav" aria-label="Sections d'administration">
-        <a class="is-active" href="#overview">Vue d'ensemble</a>
-        <a href="#location">Localisation</a>
-        <a href="#ranges">Portées &amp; cadence</a>
-        <a href="#sources">Sources ADS-B</a>
-        <a href="#display">Affichage</a>
-        <a href="#weather">Météo</a>
-        <a href="#statistics">Stats &amp; InfluxDB</a>
+      <nav class="side-nav" aria-label="Tâches d'administration">
+        <button class="is-active" type="button" data-panel="overview">Vue d'ensemble</button>
+        <button type="button" data-panel="radar">Récepteur</button>
+        <button type="button" data-panel="stats">Statistiques &amp; InfluxDB</button>
       </nav>
 
       <div class="side-foot">
@@ -39,7 +35,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">ADMINISTRATION</p>
-          <h2>Configuration du récepteur</h2>
+          <h2 id="pageTitle">Vue d'ensemble</h2>
         </div>
         <div class="topbar-actions">
           <span class="config-pill" id="configSource">—</span>
@@ -61,264 +57,341 @@
         TOUTE EXPOSITION RÉSEAU.
       </div>
 
-      <section class="status-grid" id="overview" aria-label="État du radar">
-        <article class="stat-card">
-          <span class="stat-card__label">LIAISON</span>
-          <strong class="stat__value" id="linkState">—</strong>
-          <small class="stat-card__detail" id="linkDetail">Connexion…</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">SOURCE</span>
-          <strong class="stat__value" id="sourceState">—</strong>
-          <small class="stat-card__detail" id="sourceDetail">—</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">CACHE</span>
-          <strong class="stat__value" id="cacheState">—</strong>
-          <small class="stat-card__detail">âge des données</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">CIBLES</span>
-          <strong class="stat__value" id="targetState">—</strong>
-          <small class="stat-card__detail">dans la portée max</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">CONFIG</span>
-          <strong class="stat__value" id="configState">—</strong>
-          <small class="stat-card__detail" id="configDetail">—</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">BASE STATS</span>
-          <strong class="stat__value" id="statsState">—</strong>
-          <small class="stat-card__detail" id="statsDetail">SQLite</small>
-        </article>
-        <article class="stat-card">
-          <span class="stat-card__label">INFLUXDB</span>
-          <strong class="stat__value is-muted" id="influxState">—</strong>
-          <small class="stat-card__detail" id="influxDetail">Export</small>
-        </article>
+      <section class="admin-panel" id="overviewPanel" data-panel="overview">
+        <section class="status-grid" id="overview" aria-label="État du radar">
+          <article class="stat-card">
+            <span class="stat-card__label">LIAISON</span>
+            <strong class="stat__value" id="linkState">—</strong>
+            <small class="stat-card__detail" id="linkDetail">Connexion…</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">SOURCE</span>
+            <strong class="stat__value" id="sourceState">—</strong>
+            <small class="stat-card__detail" id="sourceDetail">—</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">CACHE</span>
+            <strong class="stat__value" id="cacheState">—</strong>
+            <small class="stat-card__detail">âge des données</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">CIBLES</span>
+            <strong class="stat__value" id="targetState">—</strong>
+            <small class="stat-card__detail">dans la portée max</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">CONFIG</span>
+            <strong class="stat__value" id="configState">—</strong>
+            <small class="stat-card__detail" id="configDetail">—</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">BASE STATS</span>
+            <strong class="stat__value" id="statsState">—</strong>
+            <small class="stat-card__detail" id="statsDetail">SQLite</small>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">INFLUXDB</span>
+            <strong class="stat__value is-muted" id="influxState">—</strong>
+            <small class="stat-card__detail" id="influxDetail">Export</small>
+          </article>
+        </section>
+
+        <section class="config-card overview-actions">
+          <header class="card-head">
+            <div>
+              <p class="eyebrow">RACCOURCIS</p>
+              <h3>Accéder aux tâches</h3>
+            </div>
+            <span class="card-tag">TÂCHES</span>
+          </header>
+          <div class="quick-links">
+            <button class="quick-link" type="button" data-go="radar">
+              <span>Configurer le récepteur</span>
+              <small>Position, portées, sources, météo</small>
+              <b aria-hidden="true">→</b>
+            </button>
+            <button class="quick-link" type="button" data-go="stats">
+              <span>Statistiques &amp; InfluxDB</span>
+              <small>Export, test d'écriture, historique</small>
+              <b aria-hidden="true">→</b>
+            </button>
+          </div>
+        </section>
+        <section class="config-card">
+          <header class="card-head">
+            <div>
+              <p class="eyebrow">CONFIGURATION RUNTIME</p>
+              <h3>Actions globales</h3>
+            </div>
+            <span class="card-tag">RÉCEPTEUR + EXPORT</span>
+          </header>
+          <p class="field-note">
+            Recharge le fichier runtime complet ou revient aux variables
+            d'environnement. Ces actions concernent à la fois le récepteur et
+            l'export InfluxDB.
+          </p>
+          <div class="inline-actions">
+            <button class="button" id="reloadBtn" type="button">RECHARGER</button>
+            <button class="button button--danger" id="resetBtn" type="button">RÉINITIALISER</button>
+          </div>
+          <p class="message" id="overviewMessage" role="status"></p>
+        </section>
       </section>
 
-      <form id="configForm" novalidate>
-        <section class="config-card" id="location">
-          <header class="card-head">
-            <div>
-              <p class="eyebrow">RÉCEPTEUR</p>
-              <h3>Localisation de l'antenne</h3>
+      <section class="admin-panel" id="radarPanel" data-panel="radar" hidden>
+        <form id="configForm" novalidate>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">RÉCEPTEUR</p>
+                <h3>Localisation de l'antenne</h3>
+              </div>
+              <span class="card-tag">GPS / OACI</span>
+            </header>
+            <div class="field-grid">
+              <label>
+                <span>Mode de localisation</span>
+                <select id="location_mode" name="location_mode" required>
+                  <option value="coords">Coordonnées GPS</option>
+                  <option value="airport">Aéroport OACI</option>
+                </select>
+              </label>
+              <label class="field-wide" id="airportField" hidden>
+                <span>Aéroport (OACI, IATA ou nom)</span>
+                <input id="airport_search" name="airport_search" list="airportList"
+                       autocomplete="off" placeholder="LSGG, GVA, Geneva…">
+                <datalist id="airportList"></datalist>
+              </label>
+              <label>
+                <span>Latitude</span>
+                <input id="lat" name="lat" type="number" step="any" inputmode="decimal"
+                       min="-90" max="90" required>
+              </label>
+              <label>
+                <span>Longitude</span>
+                <input id="lon" name="lon" type="number" step="any" inputmode="decimal"
+                       min="-180" max="180" required>
+              </label>
+              <p class="field-note field-wide" id="locationHint">
+                Le mode coordonnées GPS utilise directement la latitude et la longitude.
+              </p>
             </div>
-            <span class="card-tag">GPS / OACI</span>
-          </header>
-          <div class="field-grid">
-            <label>
-              <span>Mode de localisation</span>
-              <select id="location_mode" name="location_mode" required>
-                <option value="coords">Coordonnées GPS</option>
-                <option value="airport">Aéroport OACI</option>
-              </select>
-            </label>
-            <label class="field-wide" id="airportField" hidden>
-              <span>Aéroport (OACI, IATA ou nom)</span>
-              <input id="airport_search" name="airport_search" list="airportList"
-                     autocomplete="off" placeholder="LSGG, GVA, Geneva…">
-              <datalist id="airportList"></datalist>
-            </label>
-            <label>
-              <span>Latitude</span>
-              <input id="lat" name="lat" type="number" step="any" inputmode="decimal"
-                     min="-90" max="90" required>
-            </label>
-            <label>
-              <span>Longitude</span>
-              <input id="lon" name="lon" type="number" step="any" inputmode="decimal"
-                     min="-180" max="180" required>
-            </label>
-            <p class="field-note field-wide" id="locationHint">
-              Le mode coordonnées GPS utilise directement la latitude et la longitude.
-            </p>
-          </div>
-        </section>
+          </section>
 
-        <section class="config-card" id="ranges">
-          <header class="card-head">
-            <div>
-              <p class="eyebrow">COUVERTURE</p>
-              <h3>Portées &amp; cadence</h3>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">COUVERTURE</p>
+                <h3>Portées &amp; cadence</h3>
+              </div>
+              <span class="card-tag">NM / MS / S</span>
+            </header>
+            <div class="field-grid">
+              <label>
+                <span>Rayon par défaut (NM)</span>
+                <input id="dist_nm" name="dist_nm" type="number" step="1" min="1" max="250" required>
+              </label>
+              <label>
+                <span>Portée maximale (NM)</span>
+                <input id="max_radius_nm" name="max_radius_nm" type="number" step="1" min="1" max="250" required>
+              </label>
+              <label>
+                <span>Rafraîchissement (ms)</span>
+                <input id="refresh_ms" name="refresh_ms" type="number" step="100" min="500" max="60000" required>
+              </label>
+              <label>
+                <span>Cache TTL (s)</span>
+                <input id="cache_ttl_s" name="cache_ttl_s" type="number" step="0.1" min="0" max="60" required>
+              </label>
+              <label>
+                <span>Cache périmé max (s)</span>
+                <input id="stale_ttl_s" name="stale_ttl_s" type="number" step="1" min="0" max="3600" required>
+              </label>
+              <label>
+                <span>Cooldown source (s)</span>
+                <input id="primary_cooldown_s" name="primary_cooldown_s" type="number" step="1" min="0" max="86400" required>
+              </label>
             </div>
-            <span class="card-tag">NM / MS / S</span>
-          </header>
-          <div class="field-grid">
-            <label>
-              <span>Rayon par défaut (NM)</span>
-              <input id="dist_nm" name="dist_nm" type="number" step="1" min="1" max="250" required>
-            </label>
-            <label>
-              <span>Portée maximale (NM)</span>
-              <input id="max_radius_nm" name="max_radius_nm" type="number" step="1" min="1" max="250" required>
-            </label>
-            <label>
-              <span>Rafraîchissement (ms)</span>
-              <input id="refresh_ms" name="refresh_ms" type="number" step="100" min="500" max="60000" required>
-            </label>
-            <label>
-              <span>Cache TTL (s)</span>
-              <input id="cache_ttl_s" name="cache_ttl_s" type="number" step="0.1" min="0" max="60" required>
-            </label>
-            <label>
-              <span>Cache périmé max (s)</span>
-              <input id="stale_ttl_s" name="stale_ttl_s" type="number" step="1" min="0" max="3600" required>
-            </label>
-            <label>
-              <span>Cooldown source (s)</span>
-              <input id="primary_cooldown_s" name="primary_cooldown_s" type="number" step="1" min="0" max="86400" required>
-            </label>
-          </div>
-        </section>
+          </section>
 
-        <section class="config-card" id="sources">
-          <header class="card-head">
-            <div>
-              <p class="eyebrow">FLUX</p>
-              <h3>Sources ADS-B</h3>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">FLUX</p>
+                <h3>Sources ADS-B</h3>
+              </div>
+              <span class="card-tag">API</span>
+            </header>
+            <div class="field-grid">
+              <label>
+                <span>Source primaire</span>
+                <select id="primary_provider" name="primary_provider" required>
+                  <option value="airplanes_live">Airplanes.live</option>
+                  <option value="adsb_lol">adsb.lol</option>
+                </select>
+              </label>
+              <label>
+                <span>Source de secours</span>
+                <select id="fallback_provider" name="fallback_provider" required>
+                  <option value="adsb_lol">adsb.lol</option>
+                  <option value="airplanes_live">Airplanes.live</option>
+                  <option value="none">Aucune</option>
+                </select>
+              </label>
             </div>
-            <span class="card-tag">API</span>
-          </header>
-          <div class="field-grid">
-            <label>
-              <span>Source primaire</span>
-              <select id="primary_provider" name="primary_provider" required>
-                <option value="airplanes_live">Airplanes.live</option>
-                <option value="adsb_lol">adsb.lol</option>
-              </select>
-            </label>
-            <label>
-              <span>Source de secours</span>
-              <select id="fallback_provider" name="fallback_provider" required>
-                <option value="adsb_lol">adsb.lol</option>
-                <option value="airplanes_live">Airplanes.live</option>
-                <option value="none">Aucune</option>
-              </select>
-            </label>
-          </div>
-        </section>
+          </section>
 
-        <section class="config-card" id="display">
-          <header class="card-head">
-            <div>
-              <p class="eyebrow">SCOPE MOBILE</p>
-              <h3>Affichage radar</h3>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">SCOPE MOBILE</p>
+                <h3>Affichage radar</h3>
+              </div>
+              <span class="card-tag">PPI</span>
+            </header>
+            <div class="field-grid">
+              <label>
+                <span>Style radar</span>
+                <select id="radar_style" name="radar_style" required>
+                  <option value="phosphor">Phosphore vert</option>
+                  <option value="mono">Monochrome</option>
+                  <option value="atc">ATC moderne</option>
+                </select>
+              </label>
             </div>
-            <span class="card-tag">PPI</span>
-          </header>
-          <div class="field-grid">
-            <label>
-              <span>Style radar</span>
-              <select id="radar_style" name="radar_style" required>
-                <option value="phosphor">Phosphore vert</option>
-                <option value="mono">Monochrome</option>
-                <option value="atc">ATC moderne</option>
-              </select>
-            </label>
-          </div>
-        </section>
+          </section>
 
-        <section class="config-card" id="weather">
-          <header class="card-head">
-            <div>
-              <p class="eyebrow">AVIATION</p>
-              <h3>Source météo</h3>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">AVIATION</p>
+                <h3>Source météo</h3>
+              </div>
+              <span class="card-tag">METAR</span>
+            </header>
+            <div class="field-grid">
+              <label class="field-wide">
+                <span>METAR aéroports</span>
+                <select id="weather_metar_provider" name="weather_metar_provider" required>
+                  <option value="aviationweather">Aviation Weather Center / NOAA</option>
+                  <option value="metar_taf">metar-taf.com (clé API requise)</option>
+                  <option value="checkwx">CheckWX (clé API requise)</option>
+                </select>
+              </label>
+              <p class="field-note field-wide" id="metarProviderHint">
+                Pour metar-taf.com ou CheckWX, renseigner la clé correspondante dans .env.
+              </p>
             </div>
-            <span class="card-tag">METAR</span>
-          </header>
-          <div class="field-grid">
-            <label class="field-wide">
-              <span>METAR aéroports</span>
-              <select id="weather_metar_provider" name="weather_metar_provider" required>
-                <option value="aviationweather">Aviation Weather Center / NOAA</option>
-                <option value="metar_taf">metar-taf.com (clé API requise)</option>
-                <option value="checkwx">CheckWX (clé API requise)</option>
-              </select>
-            </label>
-            <p class="field-note field-wide" id="metarProviderHint">
-              Pour metar-taf.com ou CheckWX, renseigner la clé correspondante dans .env.
-            </p>
-          </div>
-        </section>
+          </section>
 
-        <section class="config-card" id="statistics">
+          <div class="action-bar">
+            <div>
+              <p class="action-note">
+                Applique uniquement la configuration du récepteur. Les réglages
+                d'export InfluxDB restent inchangés.
+              </p>
+              <p class="message" id="message" role="status"></p>
+            </div>
+            <div class="actions">
+              <button class="button button--primary" id="saveBtn" type="submit">APPLIQUER</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section class="admin-panel" id="statsPanel" data-panel="stats" hidden>
+        <form id="influxForm" novalidate>
+          <section class="config-card">
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">EXPORT</p>
+                <h3>InfluxDB v2</h3>
+              </div>
+              <span class="card-tag">SQLITE → INFLUX</span>
+            </header>
+            <div class="field-grid">
+              <label class="field-check field-wide">
+                <input id="influx_enabled" name="influx_enabled" type="checkbox">
+                <span>Exporter les statistiques vers InfluxDB v2</span>
+              </label>
+              <label>
+                <span>URL InfluxDB</span>
+                <input id="influx_url" name="influx_url" type="url"
+                       placeholder="http://influxdb:8086" autocomplete="off">
+              </label>
+              <label>
+                <span>Organisation</span>
+                <input id="influx_org" name="influx_org" type="text"
+                       placeholder="radardesk" autocomplete="off">
+              </label>
+              <label>
+                <span>Bucket</span>
+                <input id="influx_bucket" name="influx_bucket" type="text"
+                       placeholder="adsb" autocomplete="off">
+              </label>
+              <label>
+                <span>Token API</span>
+                <input id="influx_token" name="influx_token" type="password"
+                       placeholder="Laisser vide pour conserver le token actuel"
+                       autocomplete="new-password">
+              </label>
+              <label>
+                <span>Mesure</span>
+                <input id="influx_measurement" name="influx_measurement" type="text"
+                       value="adsb_stats" autocomplete="off">
+              </label>
+              <label>
+                <span>Intervalle d'export (s)</span>
+                <input id="influx_interval_s" name="influx_interval_s" type="number"
+                       step="1" min="5" max="3600" value="30">
+              </label>
+              <p class="field-note field-wide" id="influxHint">
+                InfluxDB v2 uniquement. Le token n'est jamais renvoyé à l'interface ;
+                laisser vide conserve le token enregistré. Le test utilise la
+                configuration active : appliquer avant de tester.
+              </p>
+              <p class="field-note field-wide" id="statsHint">
+                Statistiques SQLite locales.
+              </p>
+            </div>
+          </section>
+
+          <div class="action-bar">
+            <div>
+              <p class="action-note">
+                Applique uniquement les réglages InfluxDB. La configuration du
+                récepteur reste inchangée.
+              </p>
+              <p class="message" id="influxMessage" role="status"></p>
+            </div>
+            <div class="actions">
+              <button class="button button--primary" id="saveInfluxBtn" type="submit">
+                APPLIQUER L'EXPORT
+              </button>
+              <button class="button" id="testInfluxBtn" type="button">TESTER INFLUXDB</button>
+            </div>
+          </div>
+        </form>
+
+        <section class="config-card maintenance-card">
           <header class="card-head">
             <div>
-              <p class="eyebrow">HISTORIQUE</p>
-              <h3>Statistiques &amp; InfluxDB</h3>
+              <p class="eyebrow">MAINTENANCE</p>
+              <h3>Historique SQLite</h3>
             </div>
-            <span class="card-tag">SQLITE / V2</span>
+            <span class="card-tag">DESTRUCTIF</span>
           </header>
-          <div class="field-grid">
-            <label class="field-check field-wide">
-              <input id="influx_enabled" name="influx_enabled" type="checkbox">
-              <span>Exporter les statistiques vers InfluxDB v2</span>
-            </label>
-            <label>
-              <span>URL InfluxDB</span>
-              <input id="influx_url" name="influx_url" type="url"
-                     placeholder="http://influxdb:8086" autocomplete="off">
-            </label>
-            <label>
-              <span>Organisation</span>
-              <input id="influx_org" name="influx_org" type="text"
-                     placeholder="radardesk" autocomplete="off">
-            </label>
-            <label>
-              <span>Bucket</span>
-              <input id="influx_bucket" name="influx_bucket" type="text"
-                     placeholder="adsb" autocomplete="off">
-            </label>
-            <label>
-              <span>Token API</span>
-              <input id="influx_token" name="influx_token" type="password"
-                     placeholder="Laisser vide pour conserver le token actuel"
-                     autocomplete="new-password">
-            </label>
-            <label>
-              <span>Mesure</span>
-              <input id="influx_measurement" name="influx_measurement" type="text"
-                     value="adsb_stats" autocomplete="off">
-            </label>
-            <label>
-              <span>Intervalle d'export (s)</span>
-              <input id="influx_interval_s" name="influx_interval_s" type="number"
-                     step="1" min="5" max="3600" value="30">
-            </label>
-            <p class="field-note field-wide" id="influxHint">
-              InfluxDB v2 uniquement. Le token n'est jamais renvoyé à l'interface ;
-              laisser vide conserve le token enregistré. Le test utilise la
-              configuration active : appliquer avant de tester.
-            </p>
-            <p class="field-note field-wide" id="statsHint">
-              Statistiques SQLite locales.
-            </p>
-          </div>
+          <p class="field-note">
+            Efface tout l'historique des statistiques SQLite. L'historique déjà
+            écrit dans InfluxDB n'est pas supprimé.
+          </p>
           <div class="inline-actions">
-            <button class="button" id="testInfluxBtn" type="button">TESTER INFLUXDB</button>
             <button class="button button--danger" id="resetStatsBtn" type="button">
               EFFACER L'HISTORIQUE
             </button>
           </div>
         </section>
-
-        <div class="action-bar">
-          <div>
-            <p class="action-note">
-              Les modifications sont validées puis appliquées à chaud au backend radar.
-            </p>
-            <p class="message" id="message" role="status"></p>
-          </div>
-          <div class="actions">
-            <button class="button button--primary" id="saveBtn" type="submit">APPLIQUER</button>
-            <button class="button" id="reloadBtn" type="button">RECHARGER</button>
-            <button class="button button--danger" id="resetBtn" type="button">RÉINITIALISER</button>
-          </div>
-        </div>
-      </form>
+      </section>
 
       <footer class="main-foot">
         <span>RADARDESK CONTROL PLANE</span>
