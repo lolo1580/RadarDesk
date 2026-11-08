@@ -335,6 +335,7 @@ filtre localement les boutons `−` / `+` pour un changement instantané.
   {
     "hex": "344297",
     "callsign": "AEA1672",
+    "registration": "EC-MOO",
     "lat": 46.788397,
     "lon": 6.962036,
     "alt_baro": 28700,
@@ -392,6 +393,8 @@ l'historique journalier (1–90 jours) et `minutes` la fenêtre du graphique.
 La réponse contient notamment :
 
 - `samples`, `observations`, `peak`, `average`, `unique` ;
+- `registrations` : immatriculations distinctes connues aujourd'hui ;
+- `top_registrations` : immatriculations les plus souvent contactées ;
 - `recent` : agrégats par minute sur la fenêtre demandée ;
 - `hours` : 24 agrégats horaires ;
 - `daily` : uniques et pics des derniers jours ;
@@ -470,8 +473,9 @@ Les compteurs sont calculés à partir du flux ADS-B actif, dans la zone
 centre/portée affichée. Le collecteur backend échantillonne l'antenne même
 lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
 du volume Docker `radardesk_stats_data`. La vue `STATISTIQUES` regroupe les
-indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions et le
-panneau `ANTENNE RX` ; la vue `CARTE` reste centrée sur la carte et la flotte.
+indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions, le
+top des immatriculations et le panneau `ANTENNE RX` ; la vue `CARTE` reste
+centrée sur la carte et la flotte.
 Sur les grands écrans, la vue statistiques occupe toute la hauteur disponible ;
 sur les résolutions plus basses, elle défile verticalement sans compresser les
 panneaux.
@@ -598,6 +602,7 @@ pas les widgets.
   "emergency": 0,
   "stats_enabled": true,
   "unique_today": 63,
+  "unique_registrations_today": 59,
   "peak_today": 26,
   "contacts_today": 1102,
   "samples_today": 50,
@@ -623,7 +628,8 @@ pas les widgets.
 | `airborne` | nombre | Avions en vol |
 | `ground` | nombre | Avions au sol |
 | `emergency` | nombre | Squawks 7500/7600/7700 |
-| `unique_today` | nombre | Avions uniques vus aujourd'hui |
+| `unique_today` | nombre | Adresses ICAO uniques vues aujourd'hui |
+| `unique_registrations_today` | nombre | Immatriculations distinctes connues aujourd'hui |
 | `peak_today` | nombre | Pic simultané du jour |
 | `contacts_today` | nombre | Contacts cumulés |
 | `samples_today` | nombre | Nombre de relevés SQLite |
@@ -659,6 +665,9 @@ Exemple de `services.yaml` :
               format: number
             - field: unique_today
               label: Uniques jour
+              format: number
+            - field: unique_registrations_today
+              label: Immat. jour
               format: number
             - field: peak_today
               label: Pic
@@ -708,6 +717,9 @@ Variante compacte en liste :
             format: text
         - field: unique_today
           label: Uniques jour
+          format: number
+        - field: unique_registrations_today
+          label: Immat. jour
           format: number
         - field: peak_today
           label: Pic

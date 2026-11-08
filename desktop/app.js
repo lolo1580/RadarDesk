@@ -71,6 +71,8 @@
     statBreakdown: document.getElementById("statBreakdown"),
     statUnique: document.getElementById("statUnique"),
     statSince: document.getElementById("statSince"),
+    statRegistrations: document.getElementById("statRegistrations"),
+    statRegistrationDetail: document.getElementById("statRegistrationDetail"),
     statPeak: document.getElementById("statPeak"),
     statObservations: document.getElementById("statObservations"),
     statPolls: document.getElementById("statPolls"),
@@ -83,6 +85,7 @@
     altitudeBars: document.getElementById("altitudeBars"),
     typeBars: document.getElementById("typeBars"),
     typesTotal: document.getElementById("typesTotal"),
+    registrationBars: document.getElementById("registrationBars"),
     dailyBars: document.getElementById("dailyBars"),
     antennaMode: document.getElementById("antennaMode"),
     antennaCenter: document.getElementById("antennaCenter"),
@@ -1209,6 +1212,17 @@
     return rows;
   }
 
+  function registrationRows() {
+    const summary = state.statsSummary;
+    if (!summary?.enabled || !Array.isArray(summary.top_registrations)) {
+      return [];
+    }
+    return summary.top_registrations.map((item) => ({
+      label: item.registration || "—",
+      count: Number(item.observations) || 0,
+    }));
+  }
+
   function renderDailyBars() {
     const summary = state.statsSummary;
     const rows =
@@ -1268,6 +1282,11 @@
         ? `depuis ${formatUtcTime(server.first_ts * 1000)} UTC`
         : "depuis —",
     );
+    setText(dom.statRegistrations, String(Number(server?.registrations ?? 0)));
+    setText(
+      dom.statRegistrationDetail,
+      server ? `sur ${Number(server.unique ?? 0)} adresses ICAO` : "aujourd'hui",
+    );
     setText(dom.statPeak, pad2(server?.peak ?? 0));
     setText(
       dom.statObservations,
@@ -1288,6 +1307,7 @@
     renderBarRows(dom.distanceBars, distanceBandRows());
     renderBarRows(dom.altitudeBars, altitudeBandRows());
     renderBarRows(dom.typeBars, typeBandRows());
+    renderBarRows(dom.registrationBars, registrationRows());
     renderDailyBars();
     updateStatsAntenna();
     updateOpsCount();

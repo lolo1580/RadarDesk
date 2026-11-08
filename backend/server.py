@@ -264,6 +264,9 @@ class AircraftTarget(BaseModel):
 
     hex: str = Field(description="Adresse ICAO 24 bits (hexadécimal).")
     callsign: str | None = Field(default=None, description="Indicatif de vol nettoyé.")
+    registration: str | None = Field(
+        default=None, description="Immatriculation de l'aéronef (ex: F-HBLV)."
+    )
     lat: float = Field(description="Latitude WGS-84.")
     lon: float = Field(description="Longitude WGS-84.")
     alt_baro: int | None = Field(
@@ -612,6 +615,16 @@ def _clean_type(value: Any) -> str | None:
     return text[:16] or None
 
 
+def _clean_registration(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = "".join(char for char in str(value) if char.isprintable())
+    text = re.sub(r"\s+", "", text).strip().upper()
+    if not text or not re.fullmatch(r"[A-Z0-9-]{2,16}", text):
+        return None
+    return text
+
+
 def _clean_squawk(value: Any) -> str | None:
     if value is None:
         return None
@@ -678,6 +691,7 @@ def normalize_aircraft(raw_aircraft: list[dict[str, Any]]) -> list[AircraftTarge
         target = AircraftTarget(
             hex=hex_code,
             callsign=_clean_callsign(raw.get("flight") or raw.get("callsign")),
+            registration=_clean_registration(raw.get("r") or raw.get("registration")),
             lat=round(lat, 6),
             lon=round(lon, 6),
             alt_baro=alt_baro,
@@ -910,7 +924,7 @@ def _stats_connect() -> sqlite3.Connection:
 def _stats_schema() -> None:
     with closing(_stats_connect()) as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version != 3:
+        if version < 3:
             conn.executescript(
                 """
                 DROP TABLE IF EXISTS snapshots;
@@ -940,16 +954,35 @@ def _stats_schema() -> None:
                 first_seen INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL,
                 callsign TEXT,
+                registration TEXT,
                 type TEXT,
                 max_alt INTEGER,
                 min_distance REAL,
+                observations INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(day, scope, hex)
             );
             CREATE INDEX IF NOT EXISTS idx_aircraft_seen_day_scope
                 ON aircraft_seen(day, scope);
             """
         )
-        conn.execute("PRAGMA user_version = 3")
+        # Migration non destructive des bases v3 déjà remplies : les colonnes
+        # d'immatriculation sont ajoutées sans perdre l'historique existant.
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(aircraft_seen)")
+        }
+        if "registration" not in columns:
+            conn.execute("ALTER TABLE aircraft_seen ADD COLUMN registration TEXT")
+        if "observations" not in columns:
+            conn.execute(
+                "ALTER TABLE aircraft_seen ADD COLUMN observations INTEGER NOT NULL DEFAULT 0"
+            )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aircraft_seen_day_scope_reg
+                ON aircraft_seen(day, scope, registration)
+            """
+        )
+        conn.execute("PRAGMA user_version = 4")
         conn.commit()
 
 
@@ -1083,12 +1116,15 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                 conn.execute(
                     """
                     INSERT INTO aircraft_seen
-                        (day, scope, hex, first_seen, last_seen, callsign, type,
-                         max_alt, min_distance)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (day, scope, hex, first_seen, last_seen, callsign,
+                         registration, type, max_alt, min_distance, observations)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                     ON CONFLICT(day, scope, hex) DO UPDATE SET
                         last_seen = excluded.last_seen,
                         callsign = COALESCE(excluded.callsign, aircraft_seen.callsign),
+                        registration = COALESCE(
+                            excluded.registration, aircraft_seen.registration
+                        ),
                         type = COALESCE(excluded.type, aircraft_seen.type),
                         max_alt = CASE
                             WHEN excluded.max_alt IS NULL THEN aircraft_seen.max_alt
@@ -1099,7 +1135,8 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                             WHEN excluded.min_distance IS NULL THEN aircraft_seen.min_distance
                             WHEN aircraft_seen.min_distance IS NULL THEN excluded.min_distance
                             ELSE MIN(aircraft_seen.min_distance, excluded.min_distance)
-                        END
+                        END,
+                        observations = aircraft_seen.observations + 1
                     """,
                     (
                         day,
@@ -1108,6 +1145,7 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                         ts,
                         ts,
                         target.callsign,
+                        target.registration,
                         target.type,
                         target_alt,
                         round(distance, 2),
@@ -1117,6 +1155,14 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
                 """
                 SELECT COUNT(*) FROM aircraft_seen
                 WHERE day = ? AND scope = ? AND min_distance <= ?
+                """,
+                (day, scope, default_range),
+            ).fetchone()[0]
+            unique_registrations_default = conn.execute(
+                """
+                SELECT COUNT(DISTINCT registration) FROM aircraft_seen
+                WHERE day = ? AND scope = ? AND min_distance <= ?
+                  AND registration IS NOT NULL AND registration <> ''
                 """,
                 (day, scope, default_range),
             ).fetchone()[0]
@@ -1135,12 +1181,14 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
         "counts": counts,
         "default_range_nm": default_range,
         "unique_default": int(unique_default),
+        "unique_registrations_default": int(unique_registrations_default),
         "source": snapshot.source,
         "center_lat": LAT,
         "center_lon": LON,
         "max_range_nm": float(MAX_RADIUS_NM),
         **default_counts,
     }
+
 
 def stats_summary(
     day: str,
@@ -1179,6 +1227,26 @@ def stats_summary(
             """,
             (day, scope, range_nm),
         ).fetchone()[0]
+        registrations = conn.execute(
+            """
+            SELECT COUNT(DISTINCT registration) FROM aircraft_seen
+            WHERE day = ? AND scope = ? AND min_distance <= ?
+              AND registration IS NOT NULL AND registration <> ''
+            """,
+            (day, scope, range_nm),
+        ).fetchone()[0]
+        top_registration_rows = conn.execute(
+            """
+            SELECT registration, callsign, type, observations, max_alt,
+                   min_distance, first_seen, last_seen
+            FROM aircraft_seen
+            WHERE day = ? AND scope = ? AND min_distance <= ?
+              AND registration IS NOT NULL AND registration <> ''
+            ORDER BY observations DESC, last_seen DESC
+            LIMIT 8
+            """,
+            (day, scope, range_nm),
+        ).fetchall()
         recent_rows = conn.execute(
             """
             SELECT ts, counts_json
@@ -1334,6 +1402,20 @@ def stats_summary(
         "peak": peak,
         "average": round(observations / samples, 2) if samples else 0.0,
         "unique": int(unique),
+        "registrations": int(registrations),
+        "top_registrations": [
+            {
+                "registration": row["registration"],
+                "callsign": row["callsign"],
+                "type": row["type"],
+                "observations": int(row["observations"] or 0),
+                "max_alt": row["max_alt"],
+                "min_distance": row["min_distance"],
+                "first_seen": int(row["first_seen"]),
+                "last_seen": int(row["last_seen"]),
+            }
+            for row in top_registration_rows
+        ],
         "first_ts": first_ts,
         "last_ts": last_ts,
         "last": last,
@@ -1442,6 +1524,8 @@ def _influx_line(record: dict[str, Any]) -> str:
         f"ground={int(entry.get('ground') or 0)}i",
         f"emergency={int(entry.get('emergency') or 0)}i",
         f"unique_today={int(record.get('unique_default') or 0)}i",
+        f"unique_registrations_today="
+        f"{int(record.get('unique_registrations_default') or 0)}i",
     ]
     if entry.get("max_alt") is not None:
         fields.append(f"max_alt_ft={int(entry['max_alt'])}i")
@@ -1792,6 +1876,7 @@ async def api_homepage_widget(
         "stats_enabled": stats_available(),
         "stats_day": datetime.now(UTC).strftime("%Y-%m-%d"),
         "unique_today": int(stats["unique"]) if stats else 0,
+        "unique_registrations_today": int(stats["registrations"]) if stats else 0,
         "peak_today": int(stats["peak"]) if stats else 0,
         "contacts_today": int(stats["observations"]) if stats else 0,
         "samples_today": int(stats["samples"]) if stats else 0,
