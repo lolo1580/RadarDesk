@@ -29,6 +29,11 @@
     lastRefresh: document.getElementById("lastRefresh"),
     saveBtn: document.getElementById("saveBtn"),
     saveInfluxBtn: document.getElementById("saveInfluxBtn"),
+    testSourceBtn: document.getElementById("testSourceBtn"),
+    receptionMode: document.getElementById("reception_mode"),
+    localJsonField: document.getElementById("localJsonField"),
+    localJsonUrl: document.getElementById("local_json_url"),
+    localJsonHint: document.getElementById("localJsonHint"),
     reloadBtn: document.getElementById("reloadBtn"),
     resetBtn: document.getElementById("resetBtn"),
     influxEnabled: document.getElementById("influx_enabled"),
@@ -125,6 +130,7 @@
     for (const button of [
       dom.saveBtn,
       dom.saveInfluxBtn,
+      dom.testSourceBtn,
       dom.reloadBtn,
       dom.resetBtn,
       dom.testInfluxBtn,
@@ -190,6 +196,23 @@
       lon.readOnly = airportMode;
     }
     updateLocationHint();
+  }
+
+  function syncReceptionMode() {
+    const modeField = dom.radarForm.elements.namedItem("reception_mode");
+    const local = modeField?.value === "local";
+    if (dom.localJsonField) dom.localJsonField.hidden = !local;
+    if (dom.localJsonHint) dom.localJsonHint.hidden = !local;
+    const localUrl = dom.radarForm.elements.namedItem("local_json_url");
+    if (localUrl) localUrl.required = local;
+    for (const name of [
+      "primary_provider",
+      "fallback_provider",
+      "primary_cooldown_s",
+    ]) {
+      const field = dom.radarForm.elements.namedItem(name);
+      if (field) field.disabled = local;
+    }
   }
 
   async function loadAdminAirports() {
@@ -301,6 +324,14 @@
         ? `Fournisseurs avec clé configurée : ${configured.join(", ")}.`
         : "metar-taf.com et CheckWX indisponibles : renseigner METAR_TAF_API_KEY ou CHECKWX_API_KEY dans .env puis recréer le backend.";
     }
+
+    if (dom.receptionMode) {
+      dom.receptionMode.value = config.reception_mode === "local" ? "local" : "online";
+    }
+    if (dom.localJsonUrl) {
+      dom.localJsonUrl.value = config.local_json_url || "";
+    }
+    syncReceptionMode();
   }
 
   function fillInfluxFields(config) {
@@ -531,6 +562,12 @@
     } else {
       payload.airport_icao = null;
     }
+    payload.reception_mode =
+      dom.radarForm.elements.namedItem("reception_mode").value === "local"
+        ? "local"
+        : "online";
+    payload.local_json_url =
+      dom.radarForm.elements.namedItem("local_json_url").value.trim();
     return payload;
   }
 
@@ -550,6 +587,8 @@
       radar_style: config.radar_style,
       location_mode: config.location_mode || "coords",
       airport_icao: config.airport_icao || null,
+      reception_mode: config.reception_mode === "local" ? "local" : "online",
+      local_json_url: config.local_json_url || "",
     };
   }
 
@@ -673,6 +712,31 @@
     }
   }
 
+  async function testSource() {
+    if (busy) return;
+    setBusy(true);
+    setMessage("Test de la source de réception active…");
+    try {
+      const result = await api("/api/source/test", { method: "POST" });
+      if (result.ok) {
+        setMessage(
+          `Source ${result.source} OK · ${Number(result.aircraft || 0)} cible(s) · ` +
+            `${Number(result.latency_ms || 0).toFixed(0)} ms`,
+          "success",
+        );
+      } else {
+        setMessage(`Source: ${result.detail || "échec du test"}`, "error");
+      }
+    } catch (error) {
+      setMessage(
+        `Échec : ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function reloadConfig() {
     if (busy) {
       return;
@@ -783,12 +847,14 @@
 
   dom.radarForm.addEventListener("submit", saveRadarConfig);
   dom.influxForm.addEventListener("submit", saveInfluxConfig);
+  dom.testSourceBtn.addEventListener("click", testSource);
   dom.reloadBtn.addEventListener("click", reloadConfig);
   dom.resetBtn.addEventListener("click", resetConfig);
   dom.testInfluxBtn.addEventListener("click", testInflux);
   dom.resetStatsBtn.addEventListener("click", resetStats);
 
   dom.radarForm.elements.namedItem("location_mode").addEventListener("change", syncLocationMode);
+  dom.radarForm.elements.namedItem("reception_mode").addEventListener("change", syncReceptionMode);
   const airportSearchField = dom.radarForm.elements.namedItem("airport_search");
   const selectAirportFromInput = () => {
     const airport = findAirport(airportSearchField.value);

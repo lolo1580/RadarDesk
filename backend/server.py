@@ -99,6 +99,20 @@ PRIMARY_PROVIDER = os.getenv("ADSB_PRIMARY_PROVIDER", "airplanes_live").strip().
 FALLBACK_PROVIDER = os.getenv("ADSB_FALLBACK_PROVIDER", "adsb_lol").strip().lower()
 PRIMARY_COOLDOWN_S = float(os.getenv("ADSB_PRIMARY_COOLDOWN", "600"))
 
+# Réception locale : le backend peut consommer directement un aircraft.json
+# dump1090/readsb exposé par une autre machine du réseau.
+RECEPTION_MODE = os.getenv("ADSB_RECEPTION_MODE", "online").strip().lower()
+LOCAL_JSON_URL = os.getenv("ADSB_LOCAL_JSON_URL", "").strip()
+RECEPTION_MODES = {"online", "local"}
+if RECEPTION_MODE not in RECEPTION_MODES:
+    raise RuntimeError("ADSB_RECEPTION_MODE doit être online ou local.")
+if LOCAL_JSON_URL:
+    _local_parsed = urlparse(LOCAL_JSON_URL)
+    if _local_parsed.scheme not in {"http", "https"} or not _local_parsed.netloc:
+        raise RuntimeError(
+            "ADSB_LOCAL_JSON_URL doit commencer par http:// ou https://."
+        )
+
 LOG_LEVEL = os.getenv("ADSB_LOG_LEVEL", "INFO").upper()
 CORS_ORIGINS_RAW = os.getenv("ADSB_CORS_ORIGINS", "*")
 
@@ -123,7 +137,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 # Données JSON au format dump1090/readsb pour l'interface tar1090.
 TAR1090_DATA_DIR = Path(os.getenv("ADSB_TAR1090_DATA_DIR", "/tar1090_data"))
-TAR1090_WRITE_INTERVAL_S = int(os.getenv("ADSB_TAR1090_WRITE_INTERVAL_S", "3"))
+TAR1090_WRITE_INTERVAL_S = int(os.getenv("ADSB_TAR1090_WRITE_INTERVAL_S", "10"))
 if not 2 <= TAR1090_WRITE_INTERVAL_S <= 60:
     raise RuntimeError(
         "ADSB_TAR1090_WRITE_INTERVAL_S doit être compris entre 2 et 60."
@@ -244,6 +258,8 @@ BASELINE_CONFIG: dict[str, Any] = {
     "primary_provider": PRIMARY.key,
     "fallback_provider": FALLBACK.key if FALLBACK else "none",
     "primary_cooldown_s": PRIMARY_COOLDOWN_S,
+    "reception_mode": RECEPTION_MODE,
+    "local_json_url": LOCAL_JSON_URL,
     "weather_metar_provider": METAR_PROVIDER,
     "radar_style": RADAR_STYLE,
     "location_mode": LOCATION_MODE,
@@ -382,6 +398,27 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
         raise ValueError(
             "La source de secours doit être différente de la source primaire."
         )
+    reception_mode = (
+        str(payload.get("reception_mode", values["reception_mode"]))
+        .strip()
+        .lower()
+    )
+    local_json_url = str(
+        payload.get("local_json_url", values.get("local_json_url", "")) or ""
+    ).strip()
+    if reception_mode not in RECEPTION_MODES:
+        raise ValueError("Le mode de réception doit être online ou local.")
+    if reception_mode == "local" and not local_json_url:
+        raise ValueError("L'URL aircraft.json est requise en réception locale.")
+    if local_json_url:
+        parsed_local = urlparse(local_json_url)
+        if (
+            parsed_local.scheme not in {"http", "https"}
+            or not parsed_local.netloc
+        ):
+            raise ValueError(
+                "L'URL de réception locale doit commencer par http:// ou https://."
+            )
     if weather_metar not in METAR_PROVIDERS:
         raise ValueError(f"Source METAR inconnue: {weather_metar!r}.")
     if weather_metar == "metar_taf" and not METAR_TAF_API_KEY:
@@ -467,6 +504,8 @@ def validate_runtime_config(payload: Any) -> dict[str, Any]:
 
     values["primary_provider"] = primary
     values["fallback_provider"] = fallback
+    values["reception_mode"] = reception_mode
+    values["local_json_url"] = local_json_url
     values["weather_metar_provider"] = weather_metar
     values["radar_style"] = radar_style
     values["location_mode"] = location_mode
@@ -496,6 +535,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global LAT, LON, DIST_NM, MAX_RADIUS_NM
     global REFRESH_MS, CACHE_TTL_S, STALE_TTL_S, PRIMARY_COOLDOWN_S
     global PRIMARY, FALLBACK, PRIMARY_PROVIDER, FALLBACK_PROVIDER
+    global RECEPTION_MODE, LOCAL_JSON_URL
     global METAR_PROVIDER, RADAR_STYLE, LOCATION_MODE, AIRPORT_ICAO
     global INFLUX_ENABLED, INFLUX_URL, INFLUX_ORG, INFLUX_BUCKET
     global INFLUX_TOKEN, INFLUX_MEASUREMENT, INFLUX_INTERVAL_S
@@ -512,6 +552,12 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     PRIMARY_COOLDOWN_S = float(values["primary_cooldown_s"])
     PRIMARY_PROVIDER = str(values["primary_provider"])
     FALLBACK_PROVIDER = str(values["fallback_provider"])
+    RECEPTION_MODE = str(values.get("reception_mode", "online")).strip().lower()
+    LOCAL_JSON_URL = str(values.get("local_json_url", "")).strip()
+    if RECEPTION_MODE == "local" and not LOCAL_JSON_URL:
+        logger.warning(
+            "Réception locale active sans URL aircraft.json configurée."
+        )
     METAR_PROVIDER = str(values["weather_metar_provider"])
     RADAR_STYLE = str(values["radar_style"])
     LOCATION_MODE = str(values["location_mode"])
@@ -554,6 +600,7 @@ def config_payload(*, admin: bool = False) -> dict[str, Any]:
         "fallback_provider": FALLBACK.label if FALLBACK else None,
         "primary_provider_key": PRIMARY.key,
         "fallback_provider_key": FALLBACK.key if FALLBACK else "none",
+        "reception_mode": RECEPTION_MODE,
         "primary_cooldown_s": PRIMARY_COOLDOWN_S,
         "weather_metar_provider": METAR_PROVIDER,
         "metar_taf_configured": bool(METAR_TAF_API_KEY),
@@ -577,6 +624,7 @@ def config_payload(*, admin: bool = False) -> dict[str, Any]:
                 "influx_measurement": INFLUX_MEASUREMENT,
                 "influx_interval_s": INFLUX_INTERVAL_S,
                 "influx_token_configured": bool(INFLUX_TOKEN),
+                "local_json_url": LOCAL_JSON_URL,
             }
         )
     return payload
@@ -798,9 +846,63 @@ async def fetch_provider(
     )
 
 
+async def fetch_local_snapshot(client: httpx.AsyncClient) -> CacheEntry:
+    """Récupère un aircraft.json dump1090/readsb exposé par une réception locale."""
+    if not LOCAL_JSON_URL:
+        raise UpstreamError("local: URL aircraft.json non configurée")
+    started = time.monotonic()
+    try:
+        response = await client.get(
+            LOCAL_JSON_URL,
+            headers={
+                "Accept": "application/json",
+                "Cache-Control": "no-cache",
+                "User-Agent": "radardesk/1.0 (local reception)",
+            },
+        )
+    except httpx.TimeoutException as exc:
+        raise UpstreamError("local: délai dépassé") from exc
+    except httpx.HTTPError as exc:
+        raise UpstreamError(
+            f"local: erreur réseau ({exc.__class__.__name__})"
+        ) from exc
+
+    latency_ms = (time.monotonic() - started) * 1000.0
+    if response.status_code >= 400:
+        raise UpstreamError(
+            f"local: HTTP {response.status_code}",
+            status_code=response.status_code,
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise UpstreamError("local: réponse JSON invalide") from exc
+
+    raw_aircraft: Any = payload if isinstance(payload, list) else None
+    if isinstance(payload, dict):
+        raw_aircraft = payload.get("aircraft")
+        if raw_aircraft is None:
+            raw_aircraft = payload.get("ac")
+    if not isinstance(raw_aircraft, list):
+        raise UpstreamError("local: champ 'aircraft' absent ou invalide")
+
+    aircraft = normalize_aircraft(raw_aircraft)
+    return CacheEntry(
+        aircraft=aircraft,
+        source="local",
+        fallback_used=False,
+        fetched_monotonic=time.monotonic(),
+        fetched_at=utc_now(),
+        latency_ms=latency_ms,
+    )
+
+
 async def fetch_best_snapshot(client: httpx.AsyncClient) -> CacheEntry:
-    """Tente la source primaire puis, si nécessaire, la source de secours."""
+    """Tente la réception locale, puis la source primaire et le secours."""
     global _primary_blocked_until
+
+    if RECEPTION_MODE == "local":
+        return await fetch_local_snapshot(client)
 
     errors: list[str] = []
     now = time.monotonic()
@@ -2674,6 +2776,22 @@ async def internal_stats_reset(request: Request) -> dict[str, Any]:
 async def internal_influx_test(request: Request) -> dict[str, Any]:
     _require_internal_token(request)
     return await test_influx_connection(request.app.state.http)
+
+
+@app.post("/internal/source/test", include_in_schema=False)
+async def internal_source_test(request: Request) -> dict[str, Any]:
+    _require_internal_token(request)
+    try:
+        snapshot = await fetch_best_snapshot(request.app.state.http)
+    except UpstreamError as exc:
+        return {"ok": False, "detail": str(exc)}
+    return {
+        "ok": True,
+        "source": snapshot.source,
+        "aircraft": len(snapshot.aircraft),
+        "latency_ms": round(snapshot.latency_ms, 1),
+        "reception_mode": RECEPTION_MODE,
+    }
 
 
 @app.post("/internal/reload", include_in_schema=False)

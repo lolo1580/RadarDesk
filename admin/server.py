@@ -19,6 +19,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -98,6 +99,8 @@ class RuntimeConfigPayload(BaseModel):
     primary_provider: Literal["airplanes_live", "adsb_lol"]
     fallback_provider: Literal["airplanes_live", "adsb_lol", "none"]
     primary_cooldown_s: float = Field(ge=0, le=86_400)
+    reception_mode: Literal["online", "local"] = "online"
+    local_json_url: str = ""
     weather_metar_provider: Literal["aviationweather", "metar_taf", "checkwx"]
     radar_style: Literal["phosphor", "mono", "atc"]
     location_mode: Literal["coords", "airport"] = "coords"
@@ -125,6 +128,15 @@ class RuntimeConfigPayload(BaseModel):
             raise ValueError(
                 "La source de secours doit être différente de la primaire."
             )
+        local_url = self.local_json_url.strip()
+        if self.reception_mode == "local" and not local_url:
+            raise ValueError("L'URL aircraft.json est requise en réception locale.")
+        if local_url:
+            parsed = urlparse(local_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    "L'URL de réception locale doit commencer par http:// ou https://."
+                )
         if self.influx_enabled:
             if not self.influx_url.strip():
                 raise ValueError("L'URL InfluxDB est requise quand l'export est activé.")
@@ -527,6 +539,12 @@ async def api_stats_reset(request: Request) -> dict[str, Any]:
 async def api_influx_test(request: Request) -> dict[str, Any]:
     """Teste l'écriture vers InfluxDB avec la configuration runtime active."""
     return await call_radar_internal(request, "/internal/influx/test")
+
+
+@app.post("/api/source/test", tags=["admin"])
+async def api_source_test(request: Request) -> dict[str, Any]:
+    """Teste la source de réception active (locale ou en ligne)."""
+    return await call_radar_internal(request, "/internal/source/test")
 
 
 @app.post("/api/reload", tags=["admin"])

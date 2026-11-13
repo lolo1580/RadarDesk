@@ -223,6 +223,28 @@
               <span class="card-tag">API</span>
             </header>
             <div class="field-grid">
+              <label class="field-wide">
+                <span>Mode de réception</span>
+                <select id="reception_mode" name="reception_mode" required>
+                  <option value="online">En ligne (Airplanes.live / adsb.lol)</option>
+                  <option value="local">Réception locale (JSON HTTP)</option>
+                </select>
+              </label>
+              <p class="field-note field-wide" id="receptionHint">
+                Le mode local consomme directement l'aircraft.json d'un récepteur
+                readsb / dump1090-fa situé sur une autre machine.
+              </p>
+              <label class="field-wide" id="localJsonField" hidden>
+                <span>URL aircraft.json locale</span>
+                <input id="local_json_url" name="local_json_url" type="url"
+                       autocomplete="off"
+                       placeholder="http://192.168.30.25:8080/data/aircraft.json">
+              </label>
+              <p class="field-note field-wide" id="localJsonHint" hidden>
+                Exemple readsb / dump1090-fa : http://&lt;ip-récepteur&gt;:8080/data/aircraft.json.
+                L'URL doit être joignable depuis le conteneur backend. Renseigner
+                aussi la position de l'antenne ci-dessus.
+              </p>
               <label>
                 <span>Source primaire</span>
                 <select id="primary_provider" name="primary_provider" required>
@@ -288,12 +310,14 @@
             <div>
               <p class="action-note">
                 Applique uniquement la configuration du récepteur. Les réglages
-                d'export InfluxDB restent inchangés.
+                d'export InfluxDB restent inchangés. Le test de source utilise la
+                configuration active : appliquer avant de tester.
               </p>
               <p class="message" id="message" role="status"></p>
             </div>
             <div class="actions">
               <button class="button button--primary" id="saveBtn" type="submit">APPLIQUER</button>
+              <button class="button" id="testSourceBtn" type="button">TESTER LA SOURCE</button>
             </div>
           </div>
         </form>

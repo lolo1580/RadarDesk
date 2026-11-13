@@ -27,6 +27,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Panneau « aéroport le plus proche » basé sur les coordonnées GPS configurées,
   avec bascule vers les contacts prioritaires.
 - Administration web séparée : état du flux et configuration runtime à chaud.
+- Réception locale possible depuis un récepteur readsb / dump1090-fa sur une
+  autre VM (`aircraft.json` HTTP).
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
 - Interface desktop sur `8083` : carte **tar1090** complète (filtres,
@@ -268,12 +270,14 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_PRIMARY_PROVIDER` | `airplanes_live` | Source primaire |
 | `ADSB_FALLBACK_PROVIDER` | `adsb_lol` | Secours, ou `none` |
 | `ADSB_PRIMARY_COOLDOWN` | `600` | Pause après un 403 primaire (s) |
+| `ADSB_RECEPTION_MODE` | `online` | `online` ou `local` (aircraft.json) |
+| `ADSB_LOCAL_JSON_URL` | — | URL aircraft.json du récepteur local |
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_DESKTOP_PORT` | `8083` | Port hôte du desktop (stats + proxy tar1090) |
 | `ADSB_TAR1090_PORT` | `8084` | Port hôte de tar1090 (accès direct) |
-| `ADSB_TAR1090_WRITE_INTERVAL_S` | `3` | Intervalle d'écriture des données tar1090 (s) |
+| `ADSB_TAR1090_WRITE_INTERVAL_S` | `10` | Intervalle d'écriture des données tar1090 (s) |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
@@ -537,6 +541,9 @@ Le service `admin` est séparé du backend radar :
 - **Récepteur** : formulaire dédié à la position (coordonnées GPS ou code
   OACI), aux portées, au cache, à la cadence, aux sources ADS-B et à la source
   METAR, avec un bouton **Appliquer** qui ne modifie pas l'export InfluxDB.
+  Le mode de réception peut être **en ligne** (Airplanes.live / adsb.lol) ou
+  **local** (URL `aircraft.json` readsb / dump1090), avec un bouton
+  **Tester la source**.
   En mode OACI, le HUD radar affiche le code de l'aéroport (`· LSGG`) et
   l'aéroport le plus proche passe à `0.0 NM` ;
 - **Statistiques & InfluxDB** : formulaire d'export séparé (URL, organisation,
@@ -576,6 +583,57 @@ Puis :
 ```bash
 docker compose up -d --force-recreate backend admin
 ```
+
+## Réception locale (readsb / dump1090)
+
+RadarDesk peut remplacer les fournisseurs en ligne par une réception ADS-B
+locale. Le backend lit directement un fichier `aircraft.json` au format
+dump1090/readsb exposé par une autre machine du réseau.
+
+### Depuis l'administration
+
+1. Ouvrir **Récepteur**.
+2. Choisir **Mode de réception → Réception locale (JSON HTTP)**.
+3. Renseigner l'URL, par exemple :
+   ```text
+   http://192.168.30.25:8080/data/aircraft.json
+   ```
+4. Vérifier que la position de l'antenne (latitude / longitude) correspond au
+   récepteur local.
+5. **Appliquer**, puis **Tester la source**.
+
+Le bouton de test utilise la configuration active : appliquer avant de tester.
+L'URL doit être joignable depuis le conteneur `backend`, donc utiliser l'adresse
+IP LAN du récepteur, pas `localhost`.
+
+### Sources compatibles
+
+- `dump1090-fa` avec son interface web : généralement
+  `http://<ip>:8080/data/aircraft.json` ;
+- `readsb` + tar1090 : `http://<ip>:8080/data/aircraft.json` ;
+- toute API renvoyant un objet `{"aircraft": [...]}` ou `{"ac": [...]}`, ou
+  directement un tableau d'aéronefs au format dump1090.
+
+En mode local, les sources en ligne et le cooldown primaire sont ignorés.
+Repasser en mode **En ligne** pour réutiliser Airplanes.live / adsb.lol.
+
+### Configuration par environnement
+
+```dotenv
+ADSB_RECEPTION_MODE=local
+ADSB_LOCAL_JSON_URL=http://192.168.30.25:8080/data/aircraft.json
+```
+
+Puis :
+
+```bash
+docker compose up -d --force-recreate backend
+```
+
+L'administration reste la méthode recommandée : elle applique la configuration
+à chaud et permet de tester la source. Si une configuration runtime existe déjà
+dans le volume `radardesk_admin_data`, elle reste prioritaire sur `.env` :
+utiliser l'administration ou le bouton **Réinitialiser**.
 
 ## Intégration Homepage (gethomepage.dev)
 
