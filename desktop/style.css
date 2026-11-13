@@ -836,10 +836,17 @@ h1 span {
 .stats-page .stats-local-view {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-rows: auto minmax(170px, 1fr) minmax(190px, 0.95fr) minmax(160px, 1fr) max-content;
+  /* Chaque rangée conserve une hauteur minimale suffisante pour son contenu.
+     Sur un écran plus bas, la page défile au lieu d'écraser les panneaux et
+     de laisser le contenu du récepteur chevaucher la rangée suivante. */
+  grid-template-rows:
+    auto
+    minmax(170px, 0.9fr)
+    minmax(180px, 0.9fr)
+    minmax(283px, 1.3fr)
+    max-content;
   gap: 16px;
   flex: 1 1 auto;
-  min-height: 757px;
 }
 
 .stats-page .stats-local-cards {
@@ -874,6 +881,10 @@ h1 span {
   grid-column: 1 / -1;
 }
 
+.stats-local-view .bar-list {
+  gap: 4px;
+}
+
 .local-traffic-head,
 .local-traffic-row {
   display: grid;
@@ -905,7 +916,7 @@ h1 span {
 
 .local-traffic-row {
   flex: 0 0 auto;
-  padding: 4px 0;
+  padding: 2px 0;
   color: var(--text);
   font: 10px var(--mono);
   border-bottom: 1px solid rgba(31, 45, 58, 0.45);
@@ -963,6 +974,32 @@ h1 span {
   overflow: hidden;
   color: var(--accent-soft);
   font: 700 22px/1 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Deux colonnes de métadonnées dès qu'il y a assez de largeur : le panneau
+   récepteur tient ainsi sans déborder sur la rangée des distributions. */
+@media (min-width: 1200px) {
+  .stats-page .local-receiver-grid {
+    grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+    align-content: start;
+  }
+}
+
+@media (max-width: 1199px) {
+  .stats-page .stats-local-view {
+    grid-template-rows:
+      auto
+      minmax(252px, 0.9fr)
+      minmax(180px, 0.9fr)
+      minmax(283px, 1.3fr)
+      max-content;
+  }
+}
+
+.stats-page .local-receiver-grid dd {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1796,10 +1833,6 @@ h1 span {
 
   .stats-page .stats-local-cards {
     grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-
-  .stats-page .stats-local-view {
-    min-height: 880px;
   }
 }
 

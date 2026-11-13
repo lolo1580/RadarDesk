@@ -1692,7 +1692,14 @@
       dom.localReceiverMode,
       receiver.readsb ? "READSB" : "LOCAL",
     );
-    setText(dom.localReceiverVersion, receiver.version || "—");
+    const receiverVersion = receiver.version ? String(receiver.version) : "";
+    setText(
+      dom.localReceiverVersion,
+      receiverVersion ? receiverVersion.split(" ")[0] : "—",
+    );
+    if (dom.localReceiverVersion) {
+      dom.localReceiverVersion.title = receiverVersion;
+    }
     setText(
       dom.localReceiverRefresh,
       Number.isFinite(Number(receiver.refresh_ms))
