@@ -143,6 +143,14 @@ if not 2 <= TAR1090_WRITE_INTERVAL_S <= 60:
         "ADSB_TAR1090_WRITE_INTERVAL_S doit être compris entre 2 et 60."
     )
 
+# Cache de la base tar1090 du récepteur local (db2) pour enrichir les
+# immatriculations et types absents de son aircraft.json.
+_local_db_base = ""
+_local_db_folder = ""
+_local_db_detected_at = 0.0
+_local_db_cache: dict[str, dict[str, Any]] = {}
+_local_db_lock = asyncio.Lock()
+
 # Statistiques persistantes de l'antenne (SQLite).
 STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
 STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
@@ -541,6 +549,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global INFLUX_TOKEN, INFLUX_MEASUREMENT, INFLUX_INTERVAL_S
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
+    global _local_db_base, _local_db_folder, _local_db_detected_at
 
     LAT = float(values["lat"])
     LON = float(values["lon"])
@@ -575,6 +584,10 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     _primary_blocked_until = 0.0
     _upstream_retry_after = 0.0
     _last_upstream_error = None
+    _local_db_base = ""
+    _local_db_folder = ""
+    _local_db_detected_at = 0.0
+    _local_db_cache.clear()
     _runtime_config_active = active
 
 
@@ -846,6 +859,119 @@ async def fetch_provider(
     )
 
 
+def _local_db_root() -> str:
+    parsed = urlparse(LOCAL_JSON_URL)
+    path = parsed.path or "/"
+    for suffix in ("/data/aircraft.json", "/aircraft.json"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    else:
+        path = path.rsplit("/", 1)[0] if "/" in path else ""
+    base_path = path.rstrip("/") + "/"
+    if not base_path.startswith("/"):
+        base_path = "/" + base_path
+    return f"{parsed.scheme}://{parsed.netloc}{base_path}"
+
+
+async def _detect_local_db(client: httpx.AsyncClient) -> None:
+    global _local_db_base, _local_db_folder, _local_db_detected_at
+    now = time.monotonic()
+    if _local_db_detected_at and now - _local_db_detected_at < 300:
+        return
+    base = _local_db_root()
+    try:
+        response = await client.get(base)
+    except httpx.HTTPError:
+        return
+    if response.status_code >= 400:
+        return
+    match = re.search(r'databaseFolder\s*=\s*"([^"]+)"', response.text)
+    folder = match.group(1) if match else ""
+    if folder != _local_db_folder:
+        _local_db_cache.clear()
+    _local_db_base = base
+    _local_db_folder = folder
+    _local_db_detected_at = now
+
+
+async def _local_db_file(
+    client: httpx.AsyncClient, key: str
+) -> dict[str, Any] | None:
+    if not _local_db_folder:
+        return None
+    url = f"{_local_db_base}{_local_db_folder}/{key}.js"
+    cached = _local_db_cache.get(url)
+    if cached is not None:
+        return cached
+    async with _local_db_lock:
+        cached = _local_db_cache.get(url)
+        if cached is not None:
+            return cached
+        try:
+            response = await client.get(url)
+        except httpx.HTTPError:
+            return None
+        if response.status_code >= 400:
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        _local_db_cache[url] = data
+        return data
+
+
+async def _local_metadata(
+    client: httpx.AsyncClient, hex_code: str
+) -> list[Any] | None:
+    code = hex_code.lower()
+    for level in range(1, 4):
+        bkey = code[:level]
+        dkey = code[level:]
+        if not bkey or not dkey:
+            return None
+        data = await _local_db_file(client, bkey)
+        if data is None:
+            return None
+        if dkey in data:
+            row = data[dkey]
+            return row if isinstance(row, list) and len(row) >= 2 else None
+        children = data.get("children")
+        if not isinstance(children, list) or f"{bkey}{dkey[:1]}" not in children:
+            return None
+    return None
+
+
+async def _enrich_local_aircraft(
+    client: httpx.AsyncClient, raw_aircraft: list[Any]
+) -> None:
+    if not raw_aircraft:
+        return
+    await _detect_local_db(client)
+    if not _local_db_folder:
+        return
+    for raw in raw_aircraft:
+        if not isinstance(raw, dict):
+            continue
+        hex_code = str(raw.get("hex") or raw.get("icao") or "").strip().lower()
+        if not hex_code:
+            continue
+        need_registration = not raw.get("r")
+        need_type = not raw.get("t")
+        if not need_registration and not need_type:
+            continue
+        row = await _local_metadata(client, hex_code)
+        if not row:
+            continue
+        if need_registration and row[0]:
+            raw["r"] = str(row[0])
+        if need_type and len(row) > 1 and row[1]:
+            raw["t"] = str(row[1])
+
+
 async def fetch_local_snapshot(client: httpx.AsyncClient) -> CacheEntry:
     """Récupère un aircraft.json dump1090/readsb exposé par une réception locale."""
     if not LOCAL_JSON_URL:
@@ -886,6 +1012,9 @@ async def fetch_local_snapshot(client: httpx.AsyncClient) -> CacheEntry:
     if not isinstance(raw_aircraft, list):
         raise UpstreamError("local: champ 'aircraft' absent ou invalide")
 
+    # Le JSON brut de readsb ne contient pas toujours l'immatriculation et le
+    # type : on les complète depuis la base tar1090 du récepteur local.
+    await _enrich_local_aircraft(client, raw_aircraft)
     aircraft = normalize_aircraft(raw_aircraft)
     return CacheEntry(
         aircraft=aircraft,

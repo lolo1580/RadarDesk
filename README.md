@@ -614,6 +614,10 @@ IP LAN du récepteur, pas `localhost`.
 - toute API renvoyant un objet `{"aircraft": [...]}` ou `{"ac": [...]}`, ou
   directement un tableau d'aéronefs au format dump1090.
 
+Si le récepteur expose aussi l'interface tar1090, RadarDesk lit sa base
+`db-.../` pour compléter l'immatriculation et le type lorsque le fichier
+`aircraft.json` ne les contient pas.
+
 En mode local, les sources en ligne et le cooldown primaire sont ignorés.
 Repasser en mode **En ligne** pour réutiliser Airplanes.live / adsb.lol.
 
