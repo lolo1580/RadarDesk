@@ -155,6 +155,7 @@ _local_db_lock = asyncio.Lock()
 STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
 STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
 STATS_SAMPLE_SECONDS = int(os.getenv("ADSB_STATS_SAMPLE_SECONDS", "30"))
+LOCAL_STATS_STALE_S = float(os.getenv("ADSB_LOCAL_STATS_STALE_S", "30"))
 STATS_RETENTION_DAYS = int(os.getenv("ADSB_STATS_RETENTION_DAYS", "180"))
 # Un nouvel échantillon séparé de plus de ce délai compte comme un nouveau
 # passage de l'aéronef, et non comme la continuation du précédent.
@@ -2356,6 +2357,89 @@ async def api_local_stats(request: Request, response: Response) -> dict[str, Any
     """Télémétrie du récepteur local (readsb/dump1090 stats.json)."""
     response.headers["Cache-Control"] = "no-store, max-age=0"
     return await fetch_local_receiver_stats(request.app.state.http)
+
+
+@app.get("/api/widgets/receiver", tags=["public"])
+@app.get("/api/public/receiver", include_in_schema=False)
+async def api_receiver_widget(
+    request: Request,
+    response: Response,
+) -> dict[str, Any]:
+    """Télémétrie compacte du récepteur local pour un widget Homepage."""
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    payload = await fetch_local_receiver_stats(request.app.state.http)
+    now = utc_now()
+    enabled = bool(payload.get("enabled"))
+    error = payload.get("error")
+    last = payload.get("last_minute") or {}
+    receiver = payload.get("receiver") or {}
+    aircraft = payload.get("aircraft") or {}
+    stats_now = payload.get("stats_now")
+    age_s: float | None = None
+    if isinstance(stats_now, (int, float)):
+        age_s = max(0.0, time.time() - float(stats_now))
+    if not enabled:
+        status = "disabled"
+    elif error:
+        status = "error"
+    elif age_s is not None and age_s > LOCAL_STATS_STALE_S:
+        status = "degraded"
+    else:
+        status = "ok"
+
+    accepted = last.get("accepted")
+    accepted_text = (
+        " / ".join(str(item) for item in accepted)
+        if isinstance(accepted, list) and accepted
+        else None
+    )
+    last_update = (
+        iso_utc(datetime.fromtimestamp(float(stats_now), UTC))
+        if isinstance(stats_now, (int, float))
+        else None
+    )
+
+    return {
+        "version": 1,
+        "generated_at": iso_utc(now),
+        "timestamp": int(now.timestamp()),
+        "status": status,
+        "online": status == "ok",
+        "enabled": enabled,
+        "source": payload.get("source"),
+        "error": error,
+        "cache_age_s": round(age_s, 1) if age_s is not None else None,
+        "last_update": last_update,
+        "receiver_version": receiver.get("version"),
+        "receiver_version_short": (
+            str(receiver.get("version")).split(" ")[0]
+            if receiver.get("version")
+            else None
+        ),
+        "receiver_readsb": bool(receiver.get("readsb")),
+        "receiver_refresh_ms": receiver.get("refresh_ms"),
+        "center_lat": receiver.get("lat"),
+        "center_lon": receiver.get("lon"),
+        "signal_dbfs": last.get("signal"),
+        "noise_dbfs": last.get("noise"),
+        "peak_signal_dbfs": last.get("peak_signal"),
+        "strong_signals": int(last.get("strong_signals") or 0),
+        "messages_last_minute": int(last.get("messages") or 0),
+        "message_rate": float(last.get("message_rate") or 0.0),
+        "position_count": int(last.get("position_count") or 0),
+        "max_range_nm": last.get("max_distance_nm"),
+        "gain_db": payload.get("gain_db"),
+        "estimated_ppm": payload.get("estimated_ppm"),
+        "samples_processed": int(last.get("samples_processed") or 0),
+        "samples_lost": int(last.get("samples_lost") or 0),
+        "samples_dropped": int(last.get("samples_dropped") or 0),
+        "modes": int(last.get("modes") or 0),
+        "bad": int(last.get("bad") or 0),
+        "unknown_icao": int(last.get("unknown_icao") or 0),
+        "accepted": accepted_text,
+        "aircraft_with_position": int(aircraft.get("with_position") or 0),
+        "aircraft_without_position": int(aircraft.get("without_position") or 0),
+    }
 
 
 @app.get("/api/widgets/homepage", tags=["public"])

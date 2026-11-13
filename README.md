@@ -36,8 +36,9 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
   distinctes selon le mode de réception (en ligne ou local).
 - Statistiques de réception persistantes en SQLite, échantillonnées en continu
   par le backend, avec export InfluxDB v2 configurable dans l'administration.
-- API compacte `/api/widgets/homepage` pour intégrer les compteurs dans
-  Homepage ou un autre dashboard.
+- Deux API compactes pour Homepage : `/api/widgets/homepage` pour le trafic et
+  les compteurs SQLite, `/api/widgets/receiver` pour la télémétrie du
+  récepteur local.
 - Cache serveur de 4 s, polling frontend de 3 s.
 - Le frontend mobile n'utilise aucune ressource JavaScript/CSS externe :
   Leaflet est embarqué localement, compatible Morph Browser / QtWebEngine.
@@ -451,6 +452,16 @@ ni secret n'est exposé.
 Voir la section **Intégration Homepage** pour la configuration complète, les
 mappings et le dépannage.
 
+### `GET /api/widgets/receiver`
+
+Endpoint public compact dédié au **récepteur local** : signal, bruit, pic,
+messages/s, cibles RX, portée max, gain, PPM, échantillons et version readsb.
+Il lit `data/stats.json` et `data/receiver.json` du récepteur, sans appel ADS-B
+supplémentaire. En mode en ligne, il renvoie `status: "disabled"`.
+
+L'alias `GET /api/public/receiver` renvoie le même JSON. Aucun token ni secret
+n'est exposé.
+
 ### `POST /internal/stats/reset`
 
 Endpoint interne, protégé par `X-Internal-Token`. Efface tout l'historique
@@ -673,33 +684,39 @@ RadarDesk expose une API JSON compacte utilisable directement dans le widget
 **Custom API** de [Homepage](https://gethomepage.dev/), souvent appelé
 « homepage.io ».
 
-### Endpoint
+### Endpoints
+
+Deux widgets indépendants sont disponibles :
 
 ```text
-GET /api/widgets/homepage?range_nm=50
+GET /api/widgets/homepage?range_nm=50   # trafic + compteurs SQLite
+GET /api/widgets/receiver               # télémétrie du récepteur local
 ```
 
 Alias :
 
 ```text
 GET /api/public/summary
+GET /api/public/receiver
 ```
 
 Utiliser de préférence le service desktop :
 
 ```text
 http://<hote>:8083/api/widgets/homepage?range_nm=50
+http://<hote>:8083/api/widgets/receiver
 ```
 
-Il est aussi accessible via le frontend mobile :
+Ils sont aussi accessibles via le frontend mobile :
 
 ```text
 http://<hote>:8081/api/widgets/homepage?range_nm=50
+http://<hote>:8081/api/widgets/receiver
 ```
 
-L'endpoint est public, sans authentification, et ne nécessite aucun token.
-Ne pas utiliser l'admin sur `8082` : il est protégé par Basic Auth et ne sert
-pas les widgets.
+Les endpoints sont publics, sans authentification, et ne nécessitent aucun
+token. Ne pas utiliser l'admin sur `8082` : il est protégé par Basic Auth et ne
+sert pas les widgets.
 
 ### Fonctionnement
 
@@ -769,6 +786,42 @@ pas les widgets.
 | `stats_enabled` | booléen | Collecte SQLite active |
 | `influx_enabled` | booléen | Export InfluxDB activé |
 | `generated_at` | texte ISO | Génération de la réponse |
+
+### Champs du widget récepteur
+
+`GET /api/widgets/receiver` renvoie une télémétrie plate, prête pour les
+mappings Homepage :
+
+| Champ | Type | Description |
+| --- | --- | --- |
+| `status` | texte | `ok`, `degraded`, `error`, `disabled` |
+| `online` | booléen | Récepteur joignable et données fraîches |
+| `enabled` | booléen | Réception locale active |
+| `error` | texte / null | Dernière erreur récepteur |
+| `source` | texte | `local` |
+| `cache_age_s` | nombre | Âge de `stats.json` |
+| `last_update` | texte ISO | Dernier relevé du récepteur |
+| `receiver_version` | texte | Version complète readsb / dump1090 |
+| `receiver_version_short` | texte | Version courte, ex. `3.16.21` |
+| `receiver_refresh_ms` | nombre | Intervalle de rafraîchissement |
+| `center_lat`, `center_lon` | nombres | Position du récepteur |
+| `signal_dbfs` | nombre | Signal moyen dBFS |
+| `noise_dbfs` | nombre | Bruit moyen dBFS |
+| `peak_signal_dbfs` | nombre | Pic de signal dBFS |
+| `strong_signals` | nombre | Signaux forts sur la dernière minute |
+| `messages_last_minute` | nombre | Messages reçus sur 60 s |
+| `message_rate` | nombre | Messages par seconde |
+| `position_count` | nombre | Positions calculées sur la dernière minute |
+| `max_range_nm` | nombre | Portée maximale observée |
+| `gain_db` | nombre | Gain configuré |
+| `estimated_ppm` | nombre | Correction PPM estimée |
+| `samples_processed` | nombre | Échantillons traités |
+| `samples_lost` | nombre | Échantillons perdus |
+| `samples_dropped` | nombre | Échantillons abandonnés |
+| `modes`, `bad`, `unknown_icao` | nombres | Compteurs readsb |
+| `accepted` | texte | Messages acceptés par mode |
+| `aircraft_with_position` | nombre | Aéronefs avec position |
+| `aircraft_without_position` | nombre | Aéronefs sans position |
 
 ### Configuration Homepage
 
@@ -862,6 +915,63 @@ Variante compacte en liste :
 
 Les formats `number`, `text`, `relativeDate`, `remap`, `suffix` et
 `additionalField` sont ceux du widget Custom API de Homepage.
+
+Widget séparé pour le récepteur local :
+
+```yaml
+- Récepteur ADS-B:
+    icon: mdi-antenna
+    href: http://<hote>:8083/
+    description: Télémétrie du récepteur local
+    widget:
+      type: customapi
+      url: http://<hote>:8083/api/widgets/receiver
+      refreshInterval: 10000
+      mappings:
+        - field: signal_dbfs
+          label: Signal
+          format: number
+          suffix: " dBFS"
+        - field: noise_dbfs
+          label: Bruit
+          format: number
+          suffix: " dBFS"
+        - field: message_rate
+          label: Messages/s
+          format: number
+        - field: position_count
+          label: Positions
+          format: number
+        - field: max_range_nm
+          label: Portée max
+          format: number
+          suffix: " NM"
+        - field: gain_db
+          label: Gain
+          format: number
+          suffix: " dB"
+        - field: estimated_ppm
+          label: PPM
+          format: number
+        - field: status
+          label: État
+          format: text
+          remap:
+            - value: ok
+              to: En ligne
+            - value: degraded
+              to: Différé
+            - value: error
+              to: Erreur
+            - any: true
+              to: Inactif
+        - field: last_update
+          label: MAJ
+          format: relativeDate
+          locale: fr
+          style: short
+          numeric: auto
+```
 
 ### Réseau Docker
 
