@@ -83,6 +83,7 @@
     statsPageTitle: document.getElementById("statsPageTitle"),
     statsPageSub: document.getElementById("statsPageSub"),
     statsLocalView: document.getElementById("statsLocalView"),
+    tar1090Frame: document.getElementById("tar1090Frame"),
     mapViewBtn: document.getElementById("mapViewBtn"),
     statsViewBtn: document.getElementById("statsViewBtn"),
     statCurrent: document.getElementById("statCurrent"),
@@ -1878,8 +1879,16 @@
     dom.statsViewBtn.setAttribute("aria-pressed", String(statsActive));
     document.querySelector(".desktop").dataset.view = state.mainView;
     if (statsActive) {
+      // Décharge tar1090 pendant l'affichage des statistiques : cela évite
+      // les requêtes de fond et les erreurs WebGL/tuiles dans la console.
+      if (dom.tar1090Frame && dom.tar1090Frame.getAttribute("src") !== "about:blank") {
+        dom.tar1090Frame.src = "about:blank";
+      }
       applyStatsMode();
     } else {
+      if (dom.tar1090Frame && dom.tar1090Frame.getAttribute("src") === "about:blank") {
+        dom.tar1090Frame.src = "/tar1090/";
+      }
       window.setTimeout(() => {
         state.map?.invalidateSize();
         fitRange();
