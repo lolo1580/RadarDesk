@@ -1026,6 +1026,108 @@ async def fetch_local_snapshot(client: httpx.AsyncClient) -> CacheEntry:
     )
 
 
+def _local_stats_payload(
+    stats: dict[str, Any], receiver: dict[str, Any]
+) -> dict[str, Any]:
+    last = stats.get("last1min") if isinstance(stats, dict) else None
+    last = last if isinstance(last, dict) else {}
+    local = last.get("local") if isinstance(last.get("local"), dict) else {}
+    start = last.get("start")
+    end = last.get("end")
+    try:
+        window = max(1.0, float(end) - float(start))
+    except (TypeError, ValueError):
+        window = 60.0
+    messages = int(last.get("messages") or 0)
+    max_distance = last.get("max_distance")
+    max_distance_nm = (
+        round(float(max_distance) / 1852.0, 1)
+        if isinstance(max_distance, (int, float))
+        else None
+    )
+    accepted = local.get("accepted")
+    if not isinstance(accepted, list):
+        accepted = []
+
+    return {
+        "enabled": True,
+        "source": "local",
+        "generated_at": iso_utc(utc_now()),
+        "stats_now": stats.get("now"),
+        "receiver": {
+            "version": receiver.get("version"),
+            "refresh_ms": receiver.get("refresh"),
+            "lat": receiver.get("lat"),
+            "lon": receiver.get("lon"),
+            "readsb": bool(receiver.get("readsb")),
+            "history": receiver.get("history"),
+        },
+        "aircraft": {
+            "with_position": int(stats.get("aircraft_with_pos") or 0),
+            "without_position": int(stats.get("aircraft_without_pos") or 0),
+            "by_type": stats.get("aircraft_count_by_type") or {},
+        },
+        "gain_db": stats.get("gain_db"),
+        "estimated_ppm": stats.get("estimated_ppm"),
+        "last_minute": {
+            "messages": messages,
+            "message_rate": round(messages / window, 2),
+            "signal": local.get("signal"),
+            "noise": local.get("noise"),
+            "peak_signal": local.get("peak_signal"),
+            "strong_signals": int(local.get("strong_signals") or 0),
+            "max_distance_nm": max_distance_nm,
+            "position_count": int(last.get("position_count_total") or 0),
+            "samples_processed": int(local.get("samples_processed") or 0),
+            "modes": int(local.get("modes") or 0),
+            "bad": int(local.get("bad") or 0),
+            "unknown_icao": int(local.get("unknown_icao") or 0),
+            "accepted": accepted,
+            "samples_lost": int(local.get("samples_lost") or 0),
+            "samples_dropped": int(local.get("samples_dropped") or 0),
+        },
+    }
+
+
+async def fetch_local_receiver_stats(client: httpx.AsyncClient) -> dict[str, Any]:
+    if RECEPTION_MODE != "local":
+        return {"enabled": False}
+    if not LOCAL_JSON_URL:
+        return {"enabled": True, "error": "URL aircraft.json locale non configurée."}
+    base = _local_db_root()
+    stats: dict[str, Any] | None = None
+    receiver: dict[str, Any] = {}
+    stats_status: int | None = None
+    try:
+        stats_response = await client.get(f"{base}data/stats.json")
+        stats_status = stats_response.status_code
+        if stats_response.status_code < 400:
+            payload = stats_response.json()
+            if isinstance(payload, dict):
+                stats = payload
+    except (httpx.HTTPError, ValueError):
+        pass
+    try:
+        receiver_response = await client.get(f"{base}data/receiver.json")
+        if receiver_response.status_code < 400:
+            payload = receiver_response.json()
+            if isinstance(payload, dict):
+                receiver = payload
+    except (httpx.HTTPError, ValueError):
+        pass
+    if stats is None:
+        return {
+            "enabled": True,
+            "error": (
+                f"stats.json indisponible (HTTP {stats_status})."
+                if stats_status is not None
+                else "Récepteur local injoignable."
+            ),
+            "receiver": receiver,
+        }
+    return _local_stats_payload(stats, receiver)
+
+
 async def fetch_best_snapshot(client: httpx.AsyncClient) -> CacheEntry:
     """Tente la réception locale, puis la source primaire et le secours."""
     global _primary_blocked_until
@@ -2068,6 +2170,7 @@ def apply_cache_headers(
     response.headers["X-Cache-Age"] = f"{max(0.0, age_s):.2f}"
     response.headers["X-Upstream-Latency-Ms"] = f"{entry.latency_ms:.0f}"
     response.headers["X-Last-Success"] = iso_utc(entry.fetched_at)
+    response.headers["X-Reception-Mode"] = RECEPTION_MODE
     response.headers["X-Refresh-Ms"] = str(REFRESH_MS)
     response.headers["X-Range-NM"] = f"{range_nm:g}"
     response.headers["X-Max-Range-NM"] = str(MAX_RADIUS_NM)
@@ -2150,6 +2253,7 @@ app.add_middleware(
         "X-Cache-Age",
         "X-Upstream-Latency-Ms",
         "X-Last-Success",
+        "X-Reception-Mode",
         "X-Refresh-Ms",
         "X-Range-NM",
         "X-Max-Range-NM",
@@ -2245,6 +2349,13 @@ async def api_stats_summary(
             status_code=503,
             detail="Base de statistiques temporairement indisponible.",
         ) from exc
+
+
+@app.get("/api/local/stats", tags=["stats"])
+async def api_local_stats(request: Request, response: Response) -> dict[str, Any]:
+    """Télémétrie du récepteur local (readsb/dump1090 stats.json)."""
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return await fetch_local_receiver_stats(request.app.state.http)
 
 
 @app.get("/api/widgets/homepage", tags=["public"])

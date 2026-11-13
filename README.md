@@ -32,8 +32,8 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
 - Interface desktop sur `8083` : carte **tar1090** complète (filtres,
-  recherche, table, calques, traces de session) et vue statistiques
-  RadarDesk personnalisable.
+  recherche, table, calques, traces de session) et deux vues statistiques
+  distinctes selon le mode de réception (en ligne ou local).
 - Statistiques de réception persistantes en SQLite, échantillonnées en continu
   par le backend, avec export InfluxDB v2 configurable dans l'administration.
 - API compacte `/api/widgets/homepage` pour intégrer les compteurs dans
@@ -431,6 +431,14 @@ réapparaît après au moins `ADSB_STATS_PASS_GAP_SECONDS` sans réception
 (30 minutes par défaut) ; les échantillons successifs d'une même visite ne
 gonflent donc pas le compteur.
 
+### `GET /api/local/stats`
+
+Télémétrie du récepteur local lorsque `reception_mode=local`. L'endpoint lit
+`data/stats.json` et `data/receiver.json` sur le récepteur et renvoie les
+messages/s, le signal, le bruit, le pic, la portée max, les échantillons, les
+messages acceptés/rejetés et les informations de version. En mode en ligne, il
+renvoie `{"enabled": false}`. Il ne contient aucun token ni secret.
+
 ### `GET /api/widgets/homepage?range_nm=50`
 
 Endpoint public compact, prévu pour un widget **Homepage** (gethomepage.dev) ou
@@ -496,7 +504,9 @@ distribué via l'image `blackoutsecure/tar1090`.
 
 ### Vue STATS
 
-La vue `STATISTIQUES` est l'interface RadarDesk :
+Le contenu de `STATS` dépend du mode de réception actif.
+
+**Mode en ligne** — page SQLite RadarDesk :
 
 - comptage temps réel : avions dans la zone, en vol / au sol, urgences ;
 - compteurs du jour : avions uniques, immatriculations, pic simultané,
@@ -513,8 +523,25 @@ La vue `STATISTIQUES` est l'interface RadarDesk :
   réorganise automatiquement et les préférences restent dans le navigateur
   (`localStorage`).
 
-La portée choisie dans la barre supérieure s'applique à la vue `STATS` et aux
-compteurs RadarDesk. tar1090 possède ses propres filtres de portée.
+**Mode réception locale** — page `Réception locale` :
+
+- cartes temps réel : avions locaux, messages/s, signal, portée max,
+  cibles avec/sans position, gain/PPM ;
+- télémétrie du récepteur : version readsb, rafraîchissement, position,
+  échantillons, modes, messages acceptés/rejetés, ICAO inconnus, pertes ;
+- panneau signal : signal, bruit, pic, signaux forts, messages et positions ;
+- répartitions du trafic local par distance, altitude et type ;
+- liste du trafic local (indicatif, immatriculation, type, altitude, distance) ;
+- panneau antenne locale.
+
+Cette page est alimentée par `stats.json` et `receiver.json` du récepteur local
+via `GET /api/local/stats`. Elle ne charge pas l'historique SQLite, le cumul
+d'immatriculations ni le personnalisateur, qui restent propres au mode en
+ligne. Le basculement entre les deux pages est automatique quand le mode de
+réception change.
+
+La portée choisie dans la barre supérieure s'applique aux deux vues `STATS` et
+aux compteurs RadarDesk. tar1090 possède ses propres filtres de portée.
 
 Le collecteur backend échantillonne l'antenne même lorsque le navigateur est
 fermé, et conserve l'historique dans la base SQLite du volume Docker
@@ -604,7 +631,8 @@ dump1090/readsb exposé par une autre machine du réseau.
 
 Le bouton de test utilise la configuration active : appliquer avant de tester.
 L'URL doit être joignable depuis le conteneur `backend`, donc utiliser l'adresse
-IP LAN du récepteur, pas `localhost`.
+IP LAN du récepteur, pas `localhost`. La vue `STATS` bascule alors sur la page
+`Réception locale` alimentée par le `stats.json` du récepteur.
 
 ### Sources compatibles
 

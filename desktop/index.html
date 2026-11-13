@@ -162,14 +162,14 @@
               title="Carte tar1090" loading="eager" allowfullscreen></iframe>
     </main>
 
-    <main class="stats-page" id="statsPage" tabindex="0" hidden>
+    <main class="stats-page" id="statsPage" data-reception="online" tabindex="0" hidden>
       <header class="stats-page-head">
         <div>
           <p class="eyebrow">ANALYSE</p>
-          <h2>Statistiques de réception</h2>
+          <h2 id="statsPageTitle">Statistiques de réception</h2>
         </div>
         <div class="stats-page-tools">
-          <label class="stats-period">
+          <label class="stats-period stats-online-only">
             <span>CUMUL IMMAT.</span>
             <select id="registrationPeriod" aria-label="Période de cumul des immatriculations">
               <option value="1">JOUR</option>
@@ -178,10 +178,10 @@
               <option value="180">180 JOURS</option>
             </select>
           </label>
-          <button class="stats-customize-button" id="statsCustomizeBtn" type="button">
+          <button class="stats-customize-button stats-online-only" id="statsCustomizeBtn" type="button">
             PERSONNALISER
           </button>
-          <p class="stats-page-sub">SQLite · historique 7 jours · compteurs serveur</p>
+          <p class="stats-page-sub" id="statsPageSub">SQLite · historique 7 jours · compteurs serveur</p>
         </div>
       </header>
 
@@ -282,6 +282,105 @@
             <dt>Source</dt><dd id="antennaSource">—</dd>
           </dl>
           <p class="stats-note" id="statsNote">Chargement des statistiques serveur…</p>
+        </div>
+      </section>
+
+      <section class="stats-view stats-view--page stats-local-view" id="statsLocalView">
+        <div class="stat-cards stats-local-cards">
+          <article class="stat-card">
+            <span>AVIONS LOCAUX</span>
+            <strong id="localCurrent">00</strong>
+            <small id="localCurrentDetail">0 en vol · 0 au sol</small>
+          </article>
+          <article class="stat-card">
+            <span>MESSAGES / S</span>
+            <strong id="localMessageRate">0.0</strong>
+            <small id="localMessageDetail">dernière minute</small>
+          </article>
+          <article class="stat-card">
+            <span>SIGNAL</span>
+            <strong id="localSignal">—</strong>
+            <small id="localSignalDetail">bruit — · pic —</small>
+          </article>
+          <article class="stat-card">
+            <span>PORTÉE MAX</span>
+            <strong id="localMaxRange">—</strong>
+            <small>dernière minute</small>
+          </article>
+          <article class="stat-card">
+            <span>CIBLES + POSITION</span>
+            <strong id="localPositions">0</strong>
+            <small id="localPositionsDetail">0 avec · 0 sans</small>
+          </article>
+          <article class="stat-card">
+            <span>GAIN / PPM</span>
+            <strong id="localGain">—</strong>
+            <small id="localGainDetail">—</small>
+          </article>
+        </div>
+
+        <div class="stat-panel local-receiver">
+          <header><span>RÉCEPTEUR LOCAL</span><span id="localReceiverMode">LOCAL</span></header>
+          <dl class="antenna-grid local-receiver-grid">
+            <dt>Version</dt><dd id="localReceiverVersion">—</dd>
+            <dt>Rafraîchissement</dt><dd id="localReceiverRefresh">—</dd>
+            <dt>Position</dt><dd id="localReceiverLocation">—</dd>
+            <dt>Échantillons</dt><dd id="localReceiverSamples">—</dd>
+            <dt>Modes</dt><dd id="localReceiverModes">—</dd>
+            <dt>Acceptés</dt><dd id="localReceiverAccepted">—</dd>
+            <dt>Rejetés</dt><dd id="localReceiverBad">—</dd>
+            <dt>ICAO inconnus</dt><dd id="localReceiverUnknown">—</dd>
+            <dt>Perdus / dropped</dt><dd id="localReceiverLoss">—</dd>
+            <dt>Dernier relevé</dt><dd id="localReceiverUpdated">—</dd>
+          </dl>
+        </div>
+
+        <div class="stat-panel local-signal">
+          <header><span>SIGNAL &amp; MESSAGES</span><span>dBFS</span></header>
+          <div class="local-signal-grid">
+            <div><span>Signal</span><strong id="localSignalValue">—</strong></div>
+            <div><span>Bruit</span><strong id="localNoiseValue">—</strong></div>
+            <div><span>Pic</span><strong id="localPeakValue">—</strong></div>
+            <div><span>Signaux forts</span><strong id="localStrongValue">—</strong></div>
+            <div><span>Messages</span><strong id="localMessageCountValue">—</strong></div>
+            <div><span>Positions</span><strong id="localPositionCountValue">—</strong></div>
+          </div>
+          <p class="stats-note" id="localStatsNote">Chargement des données du récepteur local…</p>
+        </div>
+
+        <div class="stat-panel local-distance">
+          <header><span>PAR DISTANCE</span><span>NM</span></header>
+          <div class="bar-list" id="localDistanceBars"></div>
+        </div>
+
+        <div class="stat-panel local-altitude">
+          <header><span>PAR ALTITUDE</span><span>FT</span></header>
+          <div class="bar-list" id="localAltitudeBars"></div>
+        </div>
+
+        <div class="stat-panel local-types">
+          <header><span>TYPES ACTUELS</span><span id="localTypesTotal">0</span></header>
+          <div class="bar-list" id="localTypeBars"></div>
+        </div>
+
+        <div class="stat-panel local-traffic">
+          <header><span>TRAFIC LOCAL</span><span id="localTrafficCount">0</span></header>
+          <div class="local-traffic-head" aria-hidden="true">
+            <span>INDICATIF</span><span>IMMAT.</span><span>TYPE</span><span>ALT.</span><span>DIST.</span>
+          </div>
+          <div class="local-traffic-list" id="localTrafficRows"></div>
+        </div>
+
+        <div class="stat-panel local-antenna">
+          <header><span>ANTENNE LOCALE</span><span id="localAntennaMode">—</span></header>
+          <dl class="antenna-grid">
+            <dt>Centre</dt><dd id="localAntennaCenter">—</dd>
+            <dt>Portée</dt><dd><span id="localAntennaRange">—</span> NM</dd>
+            <dt>Portée max</dt><dd><span id="localAntennaMax">—</span> NM</dd>
+            <dt>Surface</dt><dd id="localAntennaArea">—</dd>
+            <dt>Source</dt><dd id="localAntennaSource">—</dd>
+          </dl>
+          <p class="stats-note" id="localAntennaNote">Réception locale temps réel.</p>
         </div>
       </section>
     </main>

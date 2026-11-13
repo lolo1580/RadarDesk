@@ -80,6 +80,9 @@
     opsCount: document.getElementById("opsCount"),
     mapView: document.getElementById("mapView"),
     statsPage: document.getElementById("statsPage"),
+    statsPageTitle: document.getElementById("statsPageTitle"),
+    statsPageSub: document.getElementById("statsPageSub"),
+    statsLocalView: document.getElementById("statsLocalView"),
     mapViewBtn: document.getElementById("mapViewBtn"),
     statsViewBtn: document.getElementById("statsViewBtn"),
     statCurrent: document.getElementById("statCurrent"),
@@ -115,6 +118,48 @@
     antennaArea: document.getElementById("antennaArea"),
     antennaSource: document.getElementById("antennaSource"),
     statsNote: document.getElementById("statsNote"),
+    localCurrent: document.getElementById("localCurrent"),
+    localCurrentDetail: document.getElementById("localCurrentDetail"),
+    localMessageRate: document.getElementById("localMessageRate"),
+    localMessageDetail: document.getElementById("localMessageDetail"),
+    localSignal: document.getElementById("localSignal"),
+    localSignalDetail: document.getElementById("localSignalDetail"),
+    localMaxRange: document.getElementById("localMaxRange"),
+    localPositions: document.getElementById("localPositions"),
+    localPositionsDetail: document.getElementById("localPositionsDetail"),
+    localGain: document.getElementById("localGain"),
+    localGainDetail: document.getElementById("localGainDetail"),
+    localReceiverMode: document.getElementById("localReceiverMode"),
+    localReceiverVersion: document.getElementById("localReceiverVersion"),
+    localReceiverRefresh: document.getElementById("localReceiverRefresh"),
+    localReceiverLocation: document.getElementById("localReceiverLocation"),
+    localReceiverSamples: document.getElementById("localReceiverSamples"),
+    localReceiverModes: document.getElementById("localReceiverModes"),
+    localReceiverAccepted: document.getElementById("localReceiverAccepted"),
+    localReceiverBad: document.getElementById("localReceiverBad"),
+    localReceiverUnknown: document.getElementById("localReceiverUnknown"),
+    localReceiverLoss: document.getElementById("localReceiverLoss"),
+    localReceiverUpdated: document.getElementById("localReceiverUpdated"),
+    localSignalValue: document.getElementById("localSignalValue"),
+    localNoiseValue: document.getElementById("localNoiseValue"),
+    localPeakValue: document.getElementById("localPeakValue"),
+    localStrongValue: document.getElementById("localStrongValue"),
+    localMessageCountValue: document.getElementById("localMessageCountValue"),
+    localPositionCountValue: document.getElementById("localPositionCountValue"),
+    localStatsNote: document.getElementById("localStatsNote"),
+    localDistanceBars: document.getElementById("localDistanceBars"),
+    localAltitudeBars: document.getElementById("localAltitudeBars"),
+    localTypeBars: document.getElementById("localTypeBars"),
+    localTypesTotal: document.getElementById("localTypesTotal"),
+    localTrafficRows: document.getElementById("localTrafficRows"),
+    localTrafficCount: document.getElementById("localTrafficCount"),
+    localAntennaMode: document.getElementById("localAntennaMode"),
+    localAntennaCenter: document.getElementById("localAntennaCenter"),
+    localAntennaRange: document.getElementById("localAntennaRange"),
+    localAntennaMax: document.getElementById("localAntennaMax"),
+    localAntennaArea: document.getElementById("localAntennaArea"),
+    localAntennaSource: document.getElementById("localAntennaSource"),
+    localAntennaNote: document.getElementById("localAntennaNote"),
     searchInput: document.getElementById("searchInput"),
     filterSelect: document.getElementById("filterSelect"),
     exportBtn: document.getElementById("exportBtn"),
@@ -146,6 +191,9 @@
     statsSummary: null,
     statsFetchedAt: 0,
     statsRequestSeq: 0,
+    localStats: null,
+    localStatsRequestSeq: 0,
+    receptionMode: "online",
     registrationDays: 1,
     statsLayout: null,
     search: "",
@@ -1543,6 +1591,269 @@
     }
   }
 
+  function formatDb(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toFixed(1) : "—";
+  }
+
+  function renderLocalTrafficRows() {
+    const list = dom.localTrafficRows;
+    if (!list) return;
+    setText(dom.localTrafficCount, String(state.aircraft.length));
+    const rows = [...state.aircraft]
+      .sort((left, right) => left.distance - right.distance)
+      .slice(0, 20);
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "local-traffic-empty";
+      empty.textContent = "AUCUNE CIBLE";
+      list.replaceChildren(empty);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const aircraft of rows) {
+      const row = document.createElement("div");
+      row.className = "local-traffic-row";
+      const values = [
+        aircraft.callsign || aircraft.hex,
+        aircraft.registration || "—",
+        aircraft.type || "—",
+        formatAltitude(aircraft.altitude, aircraft.onGround),
+        `${aircraft.distance.toFixed(1)} NM`,
+      ];
+      for (const value of values) {
+        const cell = document.createElement("span");
+        cell.textContent = value;
+        row.append(cell);
+      }
+      fragment.append(row);
+    }
+    list.replaceChildren(fragment);
+  }
+
+  function renderLocalStats() {
+    const current = state.aircraft.length;
+    let airborne = 0;
+    let ground = 0;
+    for (const aircraft of state.aircraft) {
+      if (aircraft.onGround) ground += 1;
+      else airborne += 1;
+    }
+    const local =
+      state.localStats?.enabled && !state.localStats.error
+        ? state.localStats
+        : null;
+    const last = local?.last_minute || {};
+    const receiver = local?.receiver || {};
+    const localAircraft = local?.aircraft || {};
+
+    setText(dom.localCurrent, pad2(current));
+    setText(dom.localCurrentDetail, `${airborne} en vol · ${ground} au sol`);
+
+    setText(dom.localMessageRate, Number(last.message_rate || 0).toFixed(1));
+    setText(
+      dom.localMessageDetail,
+      `${Number(last.messages || 0).toLocaleString("fr-FR")} messages / 60 s`,
+    );
+    setText(dom.localSignal, formatDb(last.signal));
+    setText(
+      dom.localSignalDetail,
+      `bruit ${formatDb(last.noise)} · pic ${formatDb(last.peak_signal)}`,
+    );
+    const maxRange = Number(last.max_distance_nm);
+    setText(
+      dom.localMaxRange,
+      Number.isFinite(maxRange) ? `${maxRange.toFixed(0)} NM` : "—",
+    );
+    setText(
+      dom.localPositions,
+      String(Number(localAircraft.with_position || 0)),
+    );
+    setText(
+      dom.localPositionsDetail,
+      `${Number(localAircraft.with_position || 0)} avec · ` +
+        `${Number(localAircraft.without_position || 0)} sans`,
+    );
+    const gain = Number(local?.gain_db);
+    setText(
+      dom.localGain,
+      Number.isFinite(gain) ? `${gain.toFixed(0)} dB` : "—",
+    );
+    const ppm = Number(local?.estimated_ppm);
+    setText(
+      dom.localGainDetail,
+      Number.isFinite(ppm) ? `PPM ${ppm.toFixed(1)}` : "PPM —",
+    );
+
+    setText(
+      dom.localReceiverMode,
+      receiver.readsb ? "READSB" : "LOCAL",
+    );
+    setText(dom.localReceiverVersion, receiver.version || "—");
+    setText(
+      dom.localReceiverRefresh,
+      Number.isFinite(Number(receiver.refresh_ms))
+        ? `${Number(receiver.refresh_ms)} ms`
+        : "—",
+    );
+    const lat = Number(receiver.lat);
+    const lon = Number(receiver.lon);
+    setText(
+      dom.localReceiverLocation,
+      Number.isFinite(lat) && Number.isFinite(lon)
+        ? `${formatCoordinate(lat, "N", "S", 2)} ${formatCoordinate(lon, "E", "W", 3)}`
+        : "—",
+    );
+    setText(
+      dom.localReceiverSamples,
+      Number(last.samples_processed || 0).toLocaleString("fr-FR"),
+    );
+    setText(
+      dom.localReceiverModes,
+      Number(last.modes || 0).toLocaleString("fr-FR"),
+    );
+    setText(
+      dom.localReceiverAccepted,
+      Array.isArray(last.accepted) && last.accepted.length
+        ? last.accepted.map(String).join(" / ")
+        : "—",
+    );
+    setText(
+      dom.localReceiverBad,
+      Number(last.bad || 0).toLocaleString("fr-FR"),
+    );
+    setText(
+      dom.localReceiverUnknown,
+      Number(last.unknown_icao || 0).toLocaleString("fr-FR"),
+    );
+    setText(
+      dom.localReceiverLoss,
+      `${Number(last.samples_lost || 0).toLocaleString("fr-FR")} / ` +
+        `${Number(last.samples_dropped || 0).toLocaleString("fr-FR")}`,
+    );
+    setText(
+      dom.localReceiverUpdated,
+      local?.generated_at
+        ? `${formatUtcTime(Date.parse(local.generated_at))} UTC`
+        : "—",
+    );
+
+    setText(dom.localSignalValue, formatDb(last.signal));
+    setText(dom.localNoiseValue, formatDb(last.noise));
+    setText(dom.localPeakValue, formatDb(last.peak_signal));
+    setText(dom.localStrongValue, String(Number(last.strong_signals || 0)));
+    setText(
+      dom.localMessageCountValue,
+      Number(last.messages || 0).toLocaleString("fr-FR"),
+    );
+    setText(
+      dom.localPositionCountValue,
+      Number(last.position_count || 0).toLocaleString("fr-FR"),
+    );
+
+    renderBarRows(dom.localDistanceBars, distanceBandRows());
+    renderBarRows(dom.localAltitudeBars, altitudeBandRows());
+    renderBarRows(dom.localTypeBars, typeBandRows());
+    setText(
+      dom.localTypesTotal,
+      String(new Set(state.aircraft.map((aircraft) => aircraft.type || "INCONNU")).size),
+    );
+    renderLocalTrafficRows();
+
+    const range = Number.isFinite(state.rangeNm) ? state.rangeNm : 0;
+    const areaKm2 = Math.PI * (range * 1.852) ** 2;
+    setText(
+      dom.localAntennaCenter,
+      `${formatCoordinate(state.center.lat, "N", "S", 2)} ` +
+        `${formatCoordinate(state.center.lon, "E", "W", 3)}`,
+    );
+    setText(dom.localAntennaRange, String(Math.round(range)));
+    setText(dom.localAntennaMax, String(Math.round(state.maxRangeNm)));
+    setText(
+      dom.localAntennaArea,
+      `${Math.round(areaKm2).toLocaleString("fr-FR")} km²`,
+    );
+    setText(
+      dom.localAntennaMode,
+      state.locationMode === "airport" && state.airportIcao
+        ? `AÉROPORT ${state.airportIcao}`
+        : "GPS",
+    );
+    setText(dom.localAntennaSource, dom.sourceName.textContent || "—");
+
+    setText(
+      dom.localStatsNote,
+      local
+        ? "Télémétrie du récepteur local (stats.json)."
+        : state.localStats?.error || "Récepteur local indisponible.",
+    );
+    dom.localStatsNote?.classList.toggle("is-off", !local);
+    setText(
+      dom.localAntennaNote,
+      local
+        ? "Réception locale temps réel."
+        : "Réception locale active, télémétrie indisponible.",
+    );
+    dom.localAntennaNote?.classList.toggle("is-off", !local);
+  }
+
+  async function loadLocalStats() {
+    const requestSeq = (state.localStatsRequestSeq || 0) + 1;
+    state.localStatsRequestSeq = requestSeq;
+    try {
+      const response = await fetchWithTimeout(
+        "/api/local/stats",
+        { cache: "no-store" },
+        8000,
+      );
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (requestSeq !== state.localStatsRequestSeq) return;
+      state.localStats =
+        payload && typeof payload === "object" ? payload : null;
+      renderLocalStats();
+    } catch {
+      if (requestSeq === state.localStatsRequestSeq) {
+        state.localStats = {
+          enabled: true,
+          error: "Récepteur local indisponible.",
+        };
+        renderLocalStats();
+      }
+    }
+  }
+
+  function loadActiveStats() {
+    if (state.mainView !== "stats") return;
+    if (state.receptionMode === "local") {
+      loadLocalStats();
+    } else {
+      loadServerStats();
+    }
+  }
+
+  function applyStatsMode() {
+    const local = state.receptionMode === "local";
+    dom.statsPage.dataset.reception = local ? "local" : "online";
+    setText(
+      dom.statsPageTitle,
+      local ? "Réception locale" : "Statistiques de réception",
+    );
+    setText(
+      dom.statsPageSub,
+      local
+        ? "Récepteur local · temps réel"
+        : "SQLite · historique 7 jours · compteurs serveur",
+    );
+    if (state.mainView !== "stats") return;
+    if (local) {
+      renderLocalStats();
+    } else {
+      renderStats();
+    }
+    loadActiveStats();
+  }
+
   function updateOpsCount() {
     if (!dom.opsCount) return;
     setText(
@@ -1562,8 +1873,7 @@
     dom.statsViewBtn.setAttribute("aria-pressed", String(statsActive));
     document.querySelector(".desktop").dataset.view = state.mainView;
     if (statsActive) {
-      renderStats();
-      loadServerStats();
+      applyStatsMode();
     } else {
       window.setTimeout(() => {
         state.map?.invalidateSize();
@@ -1616,12 +1926,11 @@
           Number(dom.registrationPeriod.value) || 1,
         );
         storageWrite(STATS_PERIOD_KEY, String(state.registrationDays));
-        loadServerStats();
+        loadActiveStats();
       });
     }
     setMainView("map");
-    renderStats();
-    loadServerStats();
+    applyStatsMode();
   }
 
   function selectAircraft(hex, pan = false) {
@@ -1755,7 +2064,7 @@
       bearing: bearingDeg(center.lat, center.lon, airport.lat, airport.lon),
     }));
     renderAirports();
-    loadServerStats();
+    loadActiveStats();
   }
 
   function setRange(value) {
@@ -1766,7 +2075,7 @@
     fitRange();
     updateHud();
     renderAirports();
-    loadServerStats();
+    loadActiveStats();
     if (!state.polling) {
       window.clearTimeout(state.pollTimer);
       poll();
@@ -1793,6 +2102,11 @@
       );
       state.locationMode = config.location_mode || "coords";
       state.airportIcao = config.airport_icao || null;
+      const mode = config.reception_mode === "local" ? "local" : "online";
+      if (mode !== state.receptionMode) {
+        state.receptionMode = mode;
+        applyStatsMode();
+      }
       const refreshMs = numberOrNull(config.refresh_ms);
       if (refreshMs !== null) {
         state.pollMs = Math.min(60000, Math.max(500, refreshMs));
@@ -1835,6 +2149,14 @@
       const refreshMs = numberOrNull(response.headers.get("X-Refresh-Ms"));
       const locationMode = response.headers.get("X-Location-Mode");
       const airportIcao = response.headers.get("X-Airport-ICAO");
+      const receptionMode = response.headers.get("X-Reception-Mode");
+      if (
+        (receptionMode === "local" || receptionMode === "online") &&
+        receptionMode !== state.receptionMode
+      ) {
+        state.receptionMode = receptionMode;
+        applyStatsMode();
+      }
 
       if (refreshMs !== null) {
         state.pollMs = Math.min(60000, Math.max(500, refreshMs));
@@ -1875,6 +2197,9 @@
         dom.latencyLabel,
         `LATENCE ${Math.round(performance.now() - started)} MS`,
       );
+      if (state.mainView === "stats" && state.receptionMode === "local") {
+        renderLocalStats();
+      }
       const detailParts = [];
       if (fallback) detailParts.push("SECOURS");
       if (upstream) detailParts.push(upstream);
@@ -1984,7 +2309,7 @@
         refreshMetar(true);
         loadWeather();
       }
-      loadServerStats();
+      loadActiveStats();
     }
   });
 
@@ -1996,7 +2321,7 @@
   }, WEATHER_REFRESH_MS);
   window.setInterval(() => {
     if (document.hidden) return;
-    loadServerStats();
+    loadActiveStats();
   }, STATS_REFRESH_MS);
   updateClock();
   initStatsView();
@@ -2009,7 +2334,7 @@
     // Le flux ADS-B ne dépend pas des couches optionnelles : on démarre le
     // polling tout de suite, puis on charge aéroports et météo en parallèle.
     poll();
-    loadServerStats();
+    loadActiveStats();
     if (!TAR1090_ACTIVE) {
       loadAirportData();
       loadWeather();
