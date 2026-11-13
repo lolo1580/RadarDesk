@@ -507,6 +507,9 @@
       ).padStart(2, "0")}:${String(now.getUTCSeconds()).padStart(2, "0")} UTC`,
     );
 
+    if (status.config) {
+      currentConfig = status.config;
+    }
     if (!formLoaded && status.config) {
       fillConfig(status.config);
     }

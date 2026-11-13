@@ -379,6 +379,7 @@
     const distance = distanceNm(state.center.lat, state.center.lon, lat, lon);
     const bearing = bearingDeg(state.center.lat, state.center.lon, lat, lon);
     const callsign = cleanCallsign(raw.callsign) || hex.toUpperCase();
+    const registration = cleanType(raw.registration);
     const type = cleanType(raw.type);
     const squawk = raw.squawk ? String(raw.squawk) : null;
     const altitude = numberOrNull(raw.alt_baro);
@@ -392,6 +393,7 @@
     return {
       hex,
       callsign,
+      registration,
       type,
       squawk,
       lat,
@@ -1845,6 +1847,9 @@
         ? "Récepteur local · temps réel"
         : "SQLite · historique 7 jours · compteurs serveur",
     );
+    if (local && dom.statsCustomizeDialog?.open) {
+      dom.statsCustomizeDialog.close();
+    }
     if (state.mainView !== "stats") return;
     if (local) {
       renderLocalStats();
