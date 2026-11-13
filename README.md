@@ -29,16 +29,16 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Administration web séparée : état du flux et configuration runtime à chaud.
 - Modes paysage 18:9 et portrait compact, sans défilement.
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
-- Interface desktop standard sur `8083` : carte Leaflet, sans balayage ni
-  effets CRT, avec statistiques de réception, table de flotte, filtres, tri,
-  export CSV et fiches cibles.
+- Interface desktop sur `8083` : carte **tar1090** complète (filtres,
+  recherche, table, calques, traces de session) et vue statistiques
+  RadarDesk personnalisable.
 - Statistiques de réception persistantes en SQLite, échantillonnées en continu
   par le backend, avec export InfluxDB v2 configurable dans l'administration.
 - API compacte `/api/widgets/homepage` pour intégrer les compteurs dans
   Homepage ou un autre dashboard.
 - Cache serveur de 4 s, polling frontend de 3 s.
-- Aucune ressource JavaScript/CSS frontend externe : Leaflet est embarqué
-  localement, compatible Morph Browser / QtWebEngine.
+- Le frontend mobile n'utilise aucune ressource JavaScript/CSS externe :
+  Leaflet est embarqué localement, compatible Morph Browser / QtWebEngine.
 
 > Outil de visualisation uniquement. Ne pas utiliser pour la navigation aérienne
 > ou une décision opérationnelle.
@@ -46,44 +46,43 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 ## Architecture RadarDesk
 
 ```text
-Navigateur / Morph Browser
-          │
-          │ HTTP :8000
-          ▼
-┌───────────────────────────┐
-│ frontend                  │
-│ Nginx :80                 │
-│  /        → index/static  │
-│  /api/*   → backend       │
-└─────────────┬─────────────┘
-              │ réseau Docker interne
-              ▼
-┌───────────────────────────┐
-│ backend                   │
-│ FastAPI/Uvicorn :8000     │
-│ cache 4 s + normalisation│
-└─────────────┬─────────────┘
+Navigateur mobile / Morph Browser          Navigateur desktop
+          │ HTTP :8000                              │ HTTP :8083
+          ▼                                         ▼
+┌───────────────────────────┐          ┌──────────────────────────────┐
+│ frontend                  │          │ desktop                      │
+│ Nginx :80                 │          │ Nginx :80                    │
+│  /        → radar mobile  │          │  /          → app RadarDesk  │
+│  /api/*   → backend       │          │  /tar1090/  → tar1090        │
+└─────────────┬─────────────┘          └──────────────┬───────────────┘
+              │                                       │
+              ▼                                       ▼
+┌───────────────────────────┐          ┌──────────────────────────────┐
+│ backend                   │          │ tar1090                      │
+│ FastAPI/Uvicorn :8000     │          │ Nginx/UI :8080 → hôte 8084   │
+│ cache 4 s + normalisation │          │ lit aircraft.json            │
+└─────────────┬─────────────┘          └──────────────────────────────┘
               │ HTTPS
       ┌───────┴────────┐
       ▼                ▼
 Airplanes.live     adsb.lol
 (source primaire)  (secours)
-
-┌───────────────────────────┐       volume partagé /data
-│ admin                     │◄──────── runtime.json ────────┐
-│ FastAPI :8000 → hôte 8082 │                             │
-│ Basic Auth + UI de config │────► backend /internal/reload┘
-└───────────────────────────┘
 ```
 
-Le frontend mobile (`8081`), l'administration (`8082`) et l'interface desktop
-(`8083`) sont exposés sur la machine hôte. Le backend radar n'est pas
-accessible directement depuis l'extérieur du réseau Docker.
+Le frontend mobile (`8081`), l'administration (`8082`), l'interface desktop
+(`8083`) et tar1090 (`8084`) sont exposés sur la machine hôte. Le backend radar
+n'est pas accessible directement depuis l'extérieur du réseau Docker.
 
-L'interface desktop est une application statique autonome servie par son propre
-Nginx. Elle embarque Leaflet localement, utilise un fond de carte sombre Esri
-sans clé API et relaie `/api/` vers le backend ainsi que `/data/` vers le
-frontend mobile pour partager les mêmes données aéroports/pistes.
+La vue `CARTE` du desktop est une iframe tar1090 servie sous la même origine,
+via le proxy `/tar1090/` de Nginx. L'interface tar1090 est donc disponible à la
+fois dans le desktop et directement sur `8084`. La vue `STATISTIQUES` reste
+l'application RadarDesk servie par le Nginx desktop.
+
+Le backend écrit en continu `aircraft.json` et `receiver.json` au format
+dump1090/readsb dans le volume Docker `tar1090_data`. Le conteneur tar1090 les
+lit et les expose sous `/data/`. Le flux tar1090 est **temps réel uniquement**
+(`history: 0`) : l'historique longue durée reste géré par SQLite et la vue
+statistiques RadarDesk.
 
 Le backend écrit également un historique de réception dans une base SQLite
 locale montée sur le volume Docker `radardesk_stats_data`. Le collecteur
@@ -129,20 +128,25 @@ RadarDesk/
 │           ├── airports.json
 │           ├── runways.json
 │           └── README.txt
-└── desktop/
-    ├── Dockerfile
-    ├── .dockerignore
-    ├── nginx.conf
-    ├── index.html
-    ├── style.css
-    ├── app.js
-    ├── favicon.svg
-    └── vendor/
-        └── leaflet/
-            ├── leaflet.js
-            ├── leaflet.css
-            ├── LICENSE
-            └── images/
+├── desktop/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── nginx.conf
+│   ├── index.html
+│   ├── style.css
+│   ├── app.js
+│   ├── favicon.svg
+│   └── vendor/
+│       └── leaflet/
+│           ├── leaflet.js
+│           ├── leaflet.css
+│           ├── LICENSE
+│           └── images/
+└── tar1090/
+    ├── config.js
+    └── db2/
+        ├── ranges.js
+        └── 0.js … F.js
 ```
 
 ## Démarrage rapide
@@ -182,13 +186,21 @@ Ouvrir l'interface desktop :
 http://localhost:8083
 ```
 
+La vue `CARTE` y affiche tar1090 ; `STATS` affiche la page de statistiques
+RadarDesk. tar1090 est aussi accessible directement :
+
+```text
+http://localhost:8084
+```
+
 Identifiant et mot de passe par défaut : `admin` / `admin`.
 Les valeurs personnalisées se trouvent dans `ADSB_ADMIN_USER` et
 `ADSB_ADMIN_PASSWORD` du fichier `.env`.
 
-> **Sécurité** : les interfaces radar et desktop n'ont pas d'authentification.
-> Les exposer uniquement sur un réseau de confiance, derrière un reverse proxy
-> HTTPS et/ou un filtrage pare-feu. L'administration `8082` est protégée par
+> **Sécurité** : les interfaces radar, desktop et tar1090 (`8084`) n'ont pas
+> d'authentification. Les exposer uniquement sur un réseau de confiance,
+> derrière un reverse proxy HTTPS et/ou un filtrage pare-feu.
+> L'administration `8082` est protégée par
 > HTTP Basic Auth : changer impérativement `admin/admin`. Le token InfluxDB
 > reste dans le volume d'administration et n'est jamais renvoyé au frontend.
 > L'API Homepage est publique mais ne contient aucun secret. Le réglage
@@ -259,7 +271,9 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
 | `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
-| `ADSB_DESKTOP_PORT` | `8083` | Port hôte de l'interface desktop standard |
+| `ADSB_DESKTOP_PORT` | `8083` | Port hôte du desktop (stats + proxy tar1090) |
+| `ADSB_TAR1090_PORT` | `8084` | Port hôte de tar1090 (accès direct) |
+| `ADSB_TAR1090_WRITE_INTERVAL_S` | `3` | Intervalle d'écriture des données tar1090 (s) |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
@@ -447,58 +461,67 @@ Endpoint interne non exposé par Nginx. Il recharge le fichier
 correspondant à `ADSB_INTERNAL_TOKEN`. Le service d'administration l'appelle
 après chaque modification.
 
-## Interface desktop standard
+## Interface desktop, tar1090 et statistiques
 
-Le service `desktop` est une interface dédiée sur un troisième port TCP. Elle
-remplace volontairement le scope PPI par une carte standard, sans balayage
-radar, rémanence phosphore ni effets CRT :
+Le service `desktop` est une interface dédiée sur `8083`, avec un sélecteur
+`CARTE / STATS`.
 
-- vue `STATISTIQUES` dédiée, accessible via le sélecteur `CARTE / STATS` ;
+### Vue CARTE : tar1090
+
+La vue `CARTE` affiche l'interface [tar1090](https://github.com/wiedehopf/tar1090)
+dans une iframe servie sous la même origine (`/tar1090/`). Elle apporte :
+
+- carte OpenFreeMap Dark, anneaux de portée et marqueurs orientés ;
+- table des aéronefs avec indicatif, immatriculation, type, squawk, altitude,
+  vitesse, distance et RSSI ;
+- recherche, filtres, colonnes configurables, tri et sélection ;
+- calques et réglages tar1090, étiquettes et mode plein écran ;
+- accès direct à tar1090 sur `8084`, ou via `8083/tar1090/`.
+
+Le backend alimente tar1090 en écrivant `aircraft.json` et `receiver.json` au
+format dump1090/readsb dans le volume Docker `tar1090_data`. Le conteneur
+tar1090 les sert sous `/data/`. Le flux est temps réel uniquement
+(`history: 0`) ; l'historique longue durée reste dans SQLite pour la vue
+`STATS`.
+
+La configuration de la carte se trouve dans `tar1090/config.js`. Le dossier
+`tar1090/db2/` fournit des réponses minimales pour la base de métadonnées
+tar1090 ; les informations principales (immatriculation, type, indicatif)
+viennent directement de RadarDesk. tar1090 est un projet GPL-2.0-or-later
+distribué via l'image `blackoutsecure/tar1090`.
+
+### Vue STATS
+
+La vue `STATISTIQUES` est l'interface RadarDesk :
+
 - comptage temps réel : avions dans la zone, en vol / au sol, urgences ;
-- compteurs du jour : avions uniques, pic simultané, contacts cumulés,
-  nombre de relevés et moyenne par relevé ;
+- compteurs du jour : avions uniques, immatriculations, pic simultané,
+  contacts cumulés, nombre de relevés et moyenne par relevé ;
 - graphique d'activité sur les 60 dernières minutes et activité horaire ;
 - historique des 7 derniers jours en avions uniques ;
 - répartition des contacts par distance, par altitude et par type d'appareil ;
 - panneau antenne : centre, portée courante, portée max, surface couverte et
   source de données ;
+- top des immatriculations avec cumul jour / semaine / mois / 180 jours ;
 - statistiques persistées côté serveur en SQLite, séparées par centre d'antenne
   et par portée ;
-- vue `CARTE` avec table complète des cibles dans la bulle et fiche sélection ;
-- recherche par indicatif, type, hex ou squawk ;
-- filtres en vol / au sol / urgences ;
-- tri par indicatif, type, altitude, vitesse, squawk ou distance ;
-- sélection d'une ligne ou d'un marqueur pour centrer la carte et afficher la
-  fiche détaillée de la cible ;
-- export CSV de la sélection filtrée ;
-- fond de carte sombre Esri et marqueurs avions orientés selon leur cap ;
-- aéroports et pistes superposés selon la portée sélectionnée ;
-- badges METAR VFR/MVFR/IFR/LIFR et fiche météo au clic sur un aéroport ;
-- couche de précipitations RainViewer activable ;
-- mêmes backend, configuration et données que le radar mobile ;
-- Leaflet 1.9.4 embarqué localement, sans CDN JavaScript/CSS.
+- bouton **PERSONNALISER** pour afficher ou masquer chaque module ; la grille se
+  réorganise automatiquement et les préférences restent dans le navigateur
+  (`localStorage`).
 
-Les compteurs sont calculés à partir du flux ADS-B actif, dans la zone
-centre/portée affichée. Le collecteur backend échantillonne l'antenne même
-lorsque le navigateur est fermé, et conserve l'historique dans la base SQLite
-du volume Docker `radardesk_stats_data`. La vue `STATISTIQUES` regroupe les
-indicateurs, les graphiques 60 min / horaire / 7 jours, les répartitions, le
-top des immatriculations avec cumul jour / semaine / mois / 180 jours et le
-panneau `ANTENNE RX` ; la vue `CARTE` reste centrée sur la carte et la flotte.
-Le panneau des immatriculations affiche les 200 immatriculations les plus
-fréquentes sur la période sélectionnée, avec le nombre de passages ; la liste
-est défilable.
-Sur les grands écrans, la vue statistiques occupe toute la hauteur disponible ;
-sur les résolutions plus basses, elle défile verticalement sans compresser les
-panneaux.
+La portée choisie dans la barre supérieure s'applique à la vue `STATS` et aux
+compteurs RadarDesk. tar1090 possède ses propres filtres de portée.
 
-Le bouton **PERSONNALISER** permet d'afficher ou de masquer chaque module
-(cartes KPI, graphiques, répartitions, top immatriculations, antenne). La grille
-se réorganise automatiquement pour occuper la largeur disponible. La
-disposition et la période de cumul sont mémorisées dans le navigateur
-(`localStorage`) ; aucune préférence n'est envoyée au serveur.
+Le collecteur backend échantillonne l'antenne même lorsque le navigateur est
+fermé, et conserve l'historique dans la base SQLite du volume Docker
+`radardesk_stats_data`. Le panneau des immatriculations affiche les 200
+immatriculations les plus fréquentes sur la période sélectionnée, avec le
+nombre de passages ; la liste est défilable. Sur les grands écrans, la vue
+statistiques occupe toute la hauteur disponible ; sur les résolutions plus
+basses, elle défile verticalement sans compresser les panneaux.
 
-Le port est configurable avec `ADSB_DESKTOP_PORT`.
+Les ports sont configurables avec `ADSB_DESKTOP_PORT` (8083) et
+`ADSB_TAR1090_PORT` (8084).
 
 ## Administration
 
@@ -864,13 +887,24 @@ statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
   `ADSB_ADMIN_PASSWORD` dans `.env`, puis recréer le service `admin`.
 - **Port 8082 occupé** : modifier `ADSB_ADMIN_PORT` dans `.env`, puis
   `docker compose up -d --force-recreate admin`.
+- **tar1090 vide ou sans avions** : vérifier `docker compose logs tar1090` et
+  la présence de `aircraft.json` dans le volume `tar1090_data` :
+  `docker compose exec backend ls -l /tar1090_data`. Vérifier aussi
+  `http://localhost:8084/` et `http://localhost:8083/tar1090/`.
+- **Fond de carte tar1090 absent** : OpenFreeMap nécessite un accès Internet
+  depuis le navigateur. Les données ADS-B restent servies localement.
+- **Port 8084 occupé** : modifier `ADSB_TAR1090_PORT` dans `.env`, puis
+  `docker compose up -d --force-recreate tar1090 desktop`.
+- **Erreur 502 sur `/tar1090/`** : vérifier que le conteneur `tar1090` est
+  `healthy` (`docker compose ps tar1090`) et recréer le desktop si nécessaire.
 
 ## Aéroports
 
-Les aéroports sont embarqués localement dans `frontend/static/data/airports.json`.
-Ils sont affichés en cyan avec les codes IATA/OACI dans la portée d'affichage
-courante. Les gros aéroports restent étiquetés à grande portée ; les aéroports
-moyens sont étiquetés en priorité à courte portée pour éviter la surcharge.
+Sur le radar mobile, les aéroports sont embarqués localement dans
+`frontend/static/data/airports.json`. Ils sont affichés en cyan avec les codes
+IATA/OACI dans la portée d'affichage courante. Les gros aéroports restent
+étiquetés à grande portée ; les aéroports moyens sont étiquetés en priorité à
+courte portée pour éviter la surcharge.
 
 Source : [OurAirports](https://ourairports.com/data/), données du domaine public.
 Les pistes proviennent de `runways.json` : seuils réels, longueur, largeur,

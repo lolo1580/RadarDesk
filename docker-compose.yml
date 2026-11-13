@@ -1,6 +1,15 @@
 name: radardesk
 
 services:
+  tar1090_data_init:
+    image: alpine:3.20
+    command: ["sh", "-c", "chown -R 10001:10001 /data && chmod 755 /data"]
+    volumes:
+      - tar1090_data:/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
   backend:
     build:
       context: ./backend
@@ -29,6 +38,8 @@ services:
       METAR_TAF_API_KEY: "${METAR_TAF_API_KEY:-}"
       CHECKWX_API_KEY: "${CHECKWX_API_KEY:-}"
       ADSB_STATS_DB_PATH: /stats/adsb-stats.db
+      ADSB_TAR1090_DATA_DIR: /tar1090_data
+      ADSB_TAR1090_WRITE_INTERVAL_S: "${ADSB_TAR1090_WRITE_INTERVAL_S:-3}"
       ADSB_STATS_ENABLED: "${ADSB_STATS_ENABLED:-true}"
       ADSB_STATS_SAMPLE_SECONDS: "${ADSB_STATS_SAMPLE_SECONDS:-30}"
       ADSB_STATS_RETENTION_DAYS: "${ADSB_STATS_RETENTION_DAYS:-180}"
@@ -46,6 +57,7 @@ services:
     volumes:
       - admin_data:/data:ro
       - stats_data:/stats
+      - tar1090_data:/tar1090_data
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -53,6 +65,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    depends_on:
+      tar1090_data_init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test:
@@ -105,6 +120,8 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
+      tar1090:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -114,6 +131,41 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  tar1090:
+    image: blackoutsecure/tar1090:latest
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+      TAR1090_SOURCE_DIR: /data/readsb
+    ports:
+      - "${ADSB_TAR1090_PORT:-8084}:8080"
+    volumes:
+      - tar1090_data:/data/readsb:ro
+      - tar1090_config:/config
+      - ./tar1090/config.js:/usr/local/share/tar1090/html/config.js:ro
+      - ./tar1090/db2:/usr/local/share/tar1090/html/db2:ro
+    tmpfs:
+      - /tmp
+      - /run:exec
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      backend:
+        condition: service_healthy
+      tar1090_data_init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -169,3 +221,5 @@ services:
 volumes:
   admin_data:
   stats_data:
+  tar1090_data:
+  tar1090_config:

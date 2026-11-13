@@ -22,6 +22,7 @@
   ];
   const REDUCED_MOTION =
     window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+  const TAR1090_ACTIVE = Boolean(document.getElementById("tar1090Frame"));
   const DISTANCE_BANDS = [
     { lower: 0, upper: 5, label: "0–5" },
     { lower: 5, upper: 10, label: "5–10" },
@@ -385,6 +386,10 @@
      ======================================================================== */
 
   function initMap() {
+    // La carte principale est fournie par l'iframe tar1090. On conserve le
+    // reste de l'application (polling, table, statistiques) sans initialiser
+    // une seconde carte Leaflet en arrière-plan.
+    if (document.getElementById("tar1090Frame")) return;
     const map = L.map("map", {
       zoomControl: false,
       attributionControl: true,
@@ -1928,7 +1933,9 @@
     setRange(Number(dom.rangeSelect.value));
   });
   dom.weatherToggle.addEventListener("change", () => {
-    if (dom.weatherToggle.checked && !state.weather.path) loadWeather();
+    if (!TAR1090_ACTIVE && dom.weatherToggle.checked && !state.weather.path) {
+      loadWeather();
+    }
     applyWeatherLayer();
   });
   dom.runwayToggle.addEventListener("change", renderAirports);
@@ -1973,15 +1980,17 @@
     if (!document.hidden) {
       requestWakeLock();
       poll();
-      refreshMetar(true);
-      loadWeather();
+      if (!TAR1090_ACTIVE) {
+        refreshMetar(true);
+        loadWeather();
+      }
       loadServerStats();
     }
   });
 
   window.setInterval(updateClock, 250);
   window.setInterval(() => {
-    if (document.hidden) return;
+    if (document.hidden || TAR1090_ACTIVE) return;
     refreshMetar(true);
     loadWeather();
   }, WEATHER_REFRESH_MS);
@@ -2001,7 +2010,9 @@
     // polling tout de suite, puis on charge aéroports et météo en parallèle.
     poll();
     loadServerStats();
-    loadAirportData();
-    loadWeather();
+    if (!TAR1090_ACTIVE) {
+      loadAirportData();
+      loadWeather();
+    }
   })();
 })();

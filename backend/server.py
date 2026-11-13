@@ -121,6 +121,14 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Données JSON au format dump1090/readsb pour l'interface tar1090.
+TAR1090_DATA_DIR = Path(os.getenv("ADSB_TAR1090_DATA_DIR", "/tar1090_data"))
+TAR1090_WRITE_INTERVAL_S = int(os.getenv("ADSB_TAR1090_WRITE_INTERVAL_S", "3"))
+if not 2 <= TAR1090_WRITE_INTERVAL_S <= 60:
+    raise RuntimeError(
+        "ADSB_TAR1090_WRITE_INTERVAL_S doit être compris entre 2 et 60."
+    )
+
 # Statistiques persistantes de l'antenne (SQLite).
 STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
 STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
@@ -829,6 +837,92 @@ async def fetch_best_snapshot(client: httpx.AsyncClient) -> CacheEntry:
     raise UpstreamError(detail)
 
 
+_last_tar1090_write = 0.0
+_tar1090_write_error_at = 0.0
+
+
+def _tar1090_aircraft_payload(snapshot: CacheEntry) -> dict[str, Any]:
+    age = max(0.0, time.time() - snapshot.fetched_at.timestamp())
+    aircraft: list[dict[str, Any]] = []
+    for target in snapshot.aircraft:
+        item: dict[str, Any] = {
+            "hex": target.hex,
+            "flight": target.callsign or "",
+            "r": target.registration or "",
+            "t": target.type or "",
+            "lat": target.lat,
+            "lon": target.lon,
+            "seen": round(age, 2),
+            "seen_pos": round(age, 2),
+            "type": "adsb_icao",
+            "mlat": [],
+            "tisb": [],
+        }
+        if target.on_ground:
+            item["alt_baro"] = "ground"
+        elif target.alt_baro is not None:
+            item["alt_baro"] = target.alt_baro
+        if target.gs is not None:
+            item["gs"] = target.gs
+        if target.track is not None:
+            item["track"] = target.track
+        if target.squawk:
+            item["squawk"] = target.squawk
+        aircraft.append(item)
+    return {
+        "now": int(snapshot.fetched_at.timestamp()),
+        "messages": 0,
+        "aircraft": aircraft,
+    }
+
+
+def _tar1090_receiver_payload() -> dict[str, Any]:
+    return {
+        "version": "RadarDesk",
+        "refresh": TAR1090_WRITE_INTERVAL_S * 1000,
+        "history": 0,
+        "lat": LAT,
+        "lon": LON,
+        "site_name": AIRPORT_ICAO or "RadarDesk",
+        "maxRange": MAX_RADIUS_NM,
+        "binCraft": False,
+        "zstd": False,
+        "reapi": False,
+        "dbServer": False,
+        "haveTraces": False,
+        "readsb": False,
+    }
+
+
+def write_tar1090_files(snapshot: CacheEntry) -> None:
+    global _last_tar1090_write, _tar1090_write_error_at
+    try:
+        TAR1090_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        payloads = {
+            "aircraft.json": _tar1090_aircraft_payload(snapshot),
+            "receiver.json": _tar1090_receiver_payload(),
+        }
+        for name, payload in payloads.items():
+            temporary = TAR1090_DATA_DIR / f".{name}.tmp"
+            temporary.write_text(
+                json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, TAR1090_DATA_DIR / name)
+        _last_tar1090_write = time.monotonic()
+    except OSError as exc:
+        now = time.monotonic()
+        if now - _tar1090_write_error_at > 300:
+            logger.warning("Écriture des données tar1090 impossible: %s", exc)
+            _tar1090_write_error_at = now
+
+
+def maybe_write_tar1090(snapshot: CacheEntry) -> None:
+    if time.monotonic() - _last_tar1090_write < 1.5:
+        return
+    write_tar1090_files(snapshot)
+
+
 async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, float]:
     """Retourne (snapshot, stale, age_secondes) avec un cache anti-rafale."""
     global _cache, _last_upstream_error, _upstream_retry_after
@@ -836,6 +930,7 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
     now = time.monotonic()
     cached = _cache
     if cached is not None:
+        maybe_write_tar1090(cached)
         age = now - cached.fetched_monotonic
         if age < CACHE_TTL_S:
             return cached, False, age
@@ -856,6 +951,7 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
         try:
             fresh = await fetch_best_snapshot(client)
             _cache = fresh
+            maybe_write_tar1090(fresh)
             _upstream_retry_after = 0.0
             _last_upstream_error = None
             logger.info(
@@ -1688,6 +1784,18 @@ async def test_influx_connection(client: httpx.AsyncClient) -> dict[str, Any]:
     return {"ok": ok, "status": status, "detail": detail}
 
 
+async def tar1090_writer_loop(app: FastAPI) -> None:
+    while True:
+        try:
+            snapshot, _stale, _age = await get_snapshot(app.state.http)
+            write_tar1090_files(snapshot)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - dépend du réseau
+            logger.debug("Écriture des données tar1090: %s", exc)
+        await asyncio.sleep(TAR1090_WRITE_INTERVAL_S)
+
+
 async def stats_collector_loop(app: FastAPI) -> None:
     last_influx = 0.0
     while True:
@@ -1764,6 +1872,7 @@ async def lifespan(app: FastAPI):
         f" (secours: {FALLBACK.label})" if FALLBACK else "",
     )
     stats_task: asyncio.Task[None] | None = None
+    tar1090_task: asyncio.Task[None] | None = None
     try:
         stats_ok = await asyncio.to_thread(init_stats_db)
         if stats_ok:
@@ -1773,12 +1882,17 @@ async def lifespan(app: FastAPI):
                 STATS_SAMPLE_SECONDS,
                 STATS_RETENTION_DAYS,
             )
+        tar1090_task = asyncio.create_task(tar1090_writer_loop(app))
+        logger.info(
+            "Écriture tar1090 active (intervalle %ds).", TAR1090_WRITE_INTERVAL_S
+        )
         yield
     finally:
-        if stats_task is not None:
-            stats_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await stats_task
+        for task in (stats_task, tar1090_task):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         await app.state.http.aclose()
 
 

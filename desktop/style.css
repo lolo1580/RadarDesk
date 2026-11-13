@@ -245,6 +245,10 @@ h1 span {
   cursor: pointer;
 }
 
+.toggle[hidden] {
+  display: none;
+}
+
 .toggle input {
   width: 12px;
   height: 12px;
@@ -323,8 +327,12 @@ h1 span {
   background: var(--red);
 }
 
+.desktop[data-view="map"] .field--range {
+  display: none;
+}
+
 .counter {
-  display: flex;
+  display: none;
   align-items: baseline;
   gap: 5px;
   padding: 2px 9px;
@@ -408,6 +416,7 @@ h1 span {
    ========================================================================== */
 
 .workspace {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(360px, 28vw, 470px);
   flex: 1 1 auto;
@@ -416,6 +425,16 @@ h1 span {
 
 .workspace[hidden] {
   display: none !important;
+}
+
+.tar1090-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  border: 0;
 }
 
 .stats-page {

@@ -10,8 +10,8 @@ WORKDIR /app
 
 RUN groupadd --gid 10001 adsb \
     && useradd --uid 10001 --gid adsb --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin adsb \
-    && mkdir -p /stats \
-    && chown adsb:adsb /stats
+    && mkdir -p /stats /tar1090_data \
+    && chown adsb:adsb /stats /tar1090_data
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

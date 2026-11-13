@@ -43,11 +43,11 @@
           <span>PORTÉE</span>
           <select id="rangeSelect" aria-label="Portée d'affichage"></select>
         </label>
-        <label class="toggle map-only">
+        <label class="toggle map-only" hidden>
           <input id="weatherToggle" type="checkbox" checked>
           <span>MÉTÉO</span>
         </label>
-        <label class="toggle map-only">
+        <label class="toggle map-only" hidden>
           <input id="runwayToggle" type="checkbox" checked>
           <span>PISTES</span>
         </label>
@@ -157,6 +157,9 @@
           <span id="latencyLabel">—</span>
         </footer>
       </aside>
+
+      <iframe class="tar1090-frame" id="tar1090Frame" src="/tar1090/"
+              title="Carte tar1090" loading="eager" allowfullscreen></iframe>
     </main>
 
     <main class="stats-page" id="statsPage" tabindex="0" hidden>
