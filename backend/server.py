@@ -1521,18 +1521,22 @@ def backup_stats_db(force: bool = False) -> Path | None:
     temporary = backup_dir / f"adsb-stats-{today}.tmp"
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
+        if target.exists():
+            _last_stats_backup_at = datetime.fromtimestamp(
+                target.stat().st_mtime, UTC
+            )
+        else:
             with closing(_stats_connect()) as source:
                 with closing(sqlite3.connect(temporary)) as destination:
                     source.backup(destination)
             temporary.replace(target)
+            _last_stats_backup_at = utc_now()
             logger.info("Sauvegarde SQLite créée: %s", target)
         for old_backup in sorted(backup_dir.glob("adsb-stats-*.db"))[
             : -STATS_BACKUP_KEEP
         ]:
             old_backup.unlink(missing_ok=True)
         temporary.unlink(missing_ok=True)
-        _last_stats_backup_at = utc_now()
         _last_stats_backup_day = today
         return target
     except (OSError, sqlite3.Error) as exc:
