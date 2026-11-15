@@ -11,11 +11,13 @@ Ce conteneur est séparé du backend radar public. Il fournit :
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -51,6 +53,10 @@ BACKEND_GID = int(os.getenv("ADSB_BACKEND_GID", "10001"))
 ADMIN_CSRF_HEADER = "X-Requested-With"
 ADMIN_CSRF_VALUE = "radardesk-admin"
 MAX_ADMIN_BODY_BYTES = 64 * 1024
+LOGIN_MAX_ATTEMPTS = int(os.getenv("ADSB_ADMIN_LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_WINDOW_S = 300.0
+LOGIN_DELAY_MAX_S = 5.0
+_LOGIN_FAILURES: dict[str, list[float]] = {}
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -152,6 +158,39 @@ class RuntimeConfigPayload(BaseModel):
 # ============================================================================
 
 
+def client_key(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def prune_login_failures(key: str, now: float) -> list[float]:
+    failures = [
+        stamp
+        for stamp in _LOGIN_FAILURES.get(key, [])
+        if now - stamp < LOGIN_WINDOW_S
+    ]
+    if failures:
+        _LOGIN_FAILURES[key] = failures[-20:]
+    else:
+        _LOGIN_FAILURES.pop(key, None)
+    return failures
+
+
+async def delay_failed_login(key: str) -> None:
+    """Ralentit progressivement les tentatives répétées sur une même IP."""
+    now = time.monotonic()
+    failures = prune_login_failures(key, now)
+    failures.append(now)
+    _LOGIN_FAILURES[key] = failures[-20:]
+    if len(_LOGIN_FAILURES) > 1024:
+        _LOGIN_FAILURES.clear()
+    if len(failures) >= LOGIN_MAX_ATTEMPTS:
+        delay = min(
+            LOGIN_DELAY_MAX_S,
+            0.25 * (len(failures) - LOGIN_MAX_ATTEMPTS + 1),
+        )
+        await asyncio.sleep(delay)
+
+
 def credentials_are_valid(header: str | None) -> bool:
     if not header or not header.startswith("Basic "):
         return False
@@ -208,6 +247,7 @@ async def basic_auth_middleware(request: Request, call_next):
         return with_security_headers(await call_next(request))
 
     if not credentials_are_valid(request.headers.get("Authorization")):
+        await delay_failed_login(client_key(request))
         return with_security_headers(
             Response(
                 status_code=401,
@@ -219,6 +259,8 @@ async def basic_auth_middleware(request: Request, call_next):
                 },
             )
         )
+
+    _LOGIN_FAILURES.pop(client_key(request), None)
 
     if (
         request.method in {"POST", "PUT", "PATCH", "DELETE"}
@@ -439,6 +481,7 @@ async def api_status(request: Request) -> JSONResponse:
     """État consolidé du backend radar et de la configuration."""
     radar_health: dict[str, Any] | None = None
     radar_config: dict[str, Any] | None = None
+    local_stats: dict[str, Any] | None = None
     error: str | None = None
 
     try:
@@ -449,12 +492,23 @@ async def api_status(request: Request) -> JSONResponse:
     except HTTPException as exc:
         error = str(exc.detail)
 
+    if (
+        error is None
+        and isinstance(radar_config, dict)
+        and radar_config.get("reception_mode") == "local"
+    ):
+        try:
+            local_stats = await radar_json(request, "/api/local/stats")
+        except HTTPException:
+            local_stats = None
+
     return JSONResponse(
         content={
             "online": error is None,
             "error": error,
             "radar": radar_health,
             "config": radar_config,
+            "local_stats": local_stats,
             "runtime_file_exists": RUNTIME_CONFIG_FILE.is_file(),
             "radar_public_port": RADAR_PUBLIC_PORT,
             "desktop_public_port": DESKTOP_PUBLIC_PORT,

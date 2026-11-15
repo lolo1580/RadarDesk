@@ -824,13 +824,57 @@ h1 span {
   border-color: #bae6fd;
 }
 
-.stats-page[data-reception="local"] #statsView,
 .stats-page[data-reception="online"] #statsLocalView {
   display: none !important;
 }
 
-.stats-page[data-reception="local"] .stats-online-only {
+.stats-page[data-reception="local"][data-local-view="realtime"] #statsView {
   display: none !important;
+}
+
+.stats-page[data-reception="local"][data-local-view="history"] #statsLocalView {
+  display: none !important;
+}
+
+.stats-page[data-reception="local"][data-local-view="realtime"] .stats-online-only {
+  display: none !important;
+}
+
+.stats-local-switch {
+  display: none;
+  gap: 4px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.stats-page[data-reception="local"] .stats-local-switch {
+  display: inline-flex;
+}
+
+.stats-local-switch button {
+  min-height: 26px;
+  padding: 0 9px;
+  color: var(--dim);
+  font: 600 8px var(--sans);
+  letter-spacing: 0.07em;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.stats-local-switch button:hover,
+.stats-local-switch button:focus-visible {
+  color: var(--muted);
+  outline: none;
+}
+
+.stats-local-switch button.is-active {
+  color: #03121a;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .stats-page .stats-local-view {

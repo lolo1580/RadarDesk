@@ -162,13 +162,21 @@
               title="Carte tar1090" loading="eager" allowfullscreen></iframe>
     </main>
 
-    <main class="stats-page" id="statsPage" data-reception="online" tabindex="0" hidden>
+    <main class="stats-page" id="statsPage" data-reception="online"
+          data-local-view="realtime" tabindex="0" hidden>
       <header class="stats-page-head">
         <div>
           <p class="eyebrow">ANALYSE</p>
           <h2 id="statsPageTitle">Statistiques de réception</h2>
         </div>
         <div class="stats-page-tools">
+          <div class="stats-local-switch" id="localStatsSwitch" role="group"
+               aria-label="Vue des statistiques locales">
+            <button type="button" data-local-view="realtime" class="is-active"
+                    aria-pressed="true">TEMPS RÉEL</button>
+            <button type="button" data-local-view="history"
+                    aria-pressed="false">HISTORIQUE</button>
+          </div>
           <label class="stats-period stats-online-only">
             <span>CUMUL IMMAT.</span>
             <select id="registrationPeriod" aria-label="Période de cumul des immatriculations">

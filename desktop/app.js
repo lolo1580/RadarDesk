@@ -83,6 +83,7 @@
     statsPageTitle: document.getElementById("statsPageTitle"),
     statsPageSub: document.getElementById("statsPageSub"),
     statsLocalView: document.getElementById("statsLocalView"),
+    localStatsSwitch: document.getElementById("localStatsSwitch"),
     tar1090Frame: document.getElementById("tar1090Frame"),
     mapViewBtn: document.getElementById("mapViewBtn"),
     statsViewBtn: document.getElementById("statsViewBtn"),
@@ -195,6 +196,7 @@
     localStats: null,
     localStatsRequestSeq: 0,
     receptionMode: "online",
+    localStatsView: "realtime",
     registrationDays: 1,
     statsLayout: null,
     search: "",
@@ -1833,9 +1835,23 @@
     }
   }
 
+  function updateLocalStatsSwitch() {
+    if (!dom.localStatsSwitch) return;
+    for (const button of dom.localStatsSwitch.querySelectorAll(
+      "button[data-local-view]",
+    )) {
+      const active = button.dataset.localView === state.localStatsView;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+  }
+
   function loadActiveStats() {
     if (state.mainView !== "stats") return;
-    if (state.receptionMode === "local") {
+    if (
+      state.receptionMode === "local" &&
+      state.localStatsView === "realtime"
+    ) {
       loadLocalStats();
     } else {
       loadServerStats();
@@ -1844,22 +1860,31 @@
 
   function applyStatsMode() {
     const local = state.receptionMode === "local";
+    const localHistory = local && state.localStatsView === "history";
     dom.statsPage.dataset.reception = local ? "local" : "online";
+    dom.statsPage.dataset.localView = state.localStatsView;
+    updateLocalStatsSwitch();
     setText(
       dom.statsPageTitle,
-      local ? "Réception locale" : "Statistiques de réception",
+      localHistory
+        ? "Historique de réception"
+        : local
+          ? "Réception locale"
+          : "Statistiques de réception",
     );
     setText(
       dom.statsPageSub,
-      local
-        ? "Récepteur local · temps réel"
-        : "SQLite · historique 7 jours · compteurs serveur",
+      localHistory
+        ? "SQLite · historique 7 jours · compteurs serveur · journées UTC"
+        : local
+          ? "Récepteur local · temps réel"
+          : "SQLite · historique 7 jours · compteurs serveur · journées UTC",
     );
-    if (local && dom.statsCustomizeDialog?.open) {
+    if (local && !localHistory && dom.statsCustomizeDialog?.open) {
       dom.statsCustomizeDialog.close();
     }
     if (state.mainView !== "stats") return;
-    if (local) {
+    if (local && !localHistory) {
       renderLocalStats();
     } else {
       renderStats();
@@ -1935,6 +1960,15 @@
   function initStatsView() {
     ensureActivityChart();
     initStatsCustomization();
+    dom.localStatsSwitch?.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-local-view]");
+      if (!button) return;
+      const view = button.dataset.localView;
+      if (view !== "realtime" && view !== "history") return;
+      if (view === state.localStatsView) return;
+      state.localStatsView = view;
+      applyStatsMode();
+    });
     dom.mapViewBtn.addEventListener("click", () => setMainView("map"));
     dom.statsViewBtn.addEventListener("click", () => setMainView("stats"));
     if (dom.registrationPeriod) {
@@ -2176,6 +2210,7 @@
         receptionMode !== state.receptionMode
       ) {
         state.receptionMode = receptionMode;
+        state.localStatsView = "realtime";
         applyStatsMode();
       }
 
@@ -2218,7 +2253,11 @@
         dom.latencyLabel,
         `LATENCE ${Math.round(performance.now() - started)} MS`,
       );
-      if (state.mainView === "stats" && state.receptionMode === "local") {
+      if (
+        state.mainView === "stats" &&
+        state.receptionMode === "local" &&
+        state.localStatsView === "realtime"
+      ) {
         renderLocalStats();
       }
       const detailParts = [];

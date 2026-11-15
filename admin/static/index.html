@@ -263,6 +263,49 @@
             </div>
           </section>
 
+          <section class="config-card" id="localTelemetryCard" hidden>
+            <header class="card-head">
+              <div>
+                <p class="eyebrow">RÉCEPTEUR LOCAL</p>
+                <h3>Télémétrie temps réel</h3>
+              </div>
+              <span class="card-tag" id="localTelemetryState">LOCAL</span>
+            </header>
+            <div class="telemetry-grid">
+              <div class="telemetry-item">
+                <span>Signal</span>
+                <strong id="adminLocalSignal">—</strong>
+                <small id="adminLocalSignalDetail">bruit — · pic —</small>
+              </div>
+              <div class="telemetry-item">
+                <span>Messages / s</span>
+                <strong id="adminLocalRate">—</strong>
+                <small id="adminLocalRateDetail">dernière minute</small>
+              </div>
+              <div class="telemetry-item">
+                <span>Positions RX</span>
+                <strong id="adminLocalPositions">—</strong>
+                <small id="adminLocalPositionsDetail">avec / sans position</small>
+              </div>
+              <div class="telemetry-item">
+                <span>Portée max</span>
+                <strong id="adminLocalRange">—</strong>
+                <small>dernière minute</small>
+              </div>
+              <div class="telemetry-item">
+                <span>Gain / PPM</span>
+                <strong id="adminLocalGain">—</strong>
+                <small id="adminLocalGainDetail">—</small>
+              </div>
+              <div class="telemetry-item">
+                <span>Dernier relevé</span>
+                <strong id="adminLocalUpdated">—</strong>
+                <small id="adminLocalVersion">—</small>
+              </div>
+            </div>
+            <p class="field-note" id="localTelemetryNote">Télémétrie readsb / dump1090.</p>
+          </section>
+
           <section class="config-card">
             <header class="card-head">
               <div>

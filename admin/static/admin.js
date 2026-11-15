@@ -47,6 +47,20 @@
     statsHint: document.getElementById("statsHint"),
     testInfluxBtn: document.getElementById("testInfluxBtn"),
     resetStatsBtn: document.getElementById("resetStatsBtn"),
+    localTelemetryCard: document.getElementById("localTelemetryCard"),
+    localTelemetryState: document.getElementById("localTelemetryState"),
+    localSignal: document.getElementById("adminLocalSignal"),
+    localSignalDetail: document.getElementById("adminLocalSignalDetail"),
+    localRate: document.getElementById("adminLocalRate"),
+    localRateDetail: document.getElementById("adminLocalRateDetail"),
+    localPositions: document.getElementById("adminLocalPositions"),
+    localPositionsDetail: document.getElementById("adminLocalPositionsDetail"),
+    localRange: document.getElementById("adminLocalRange"),
+    localGain: document.getElementById("adminLocalGain"),
+    localGainDetail: document.getElementById("adminLocalGainDetail"),
+    localUpdated: document.getElementById("adminLocalUpdated"),
+    localVersion: document.getElementById("adminLocalVersion"),
+    localTelemetryNote: document.getElementById("localTelemetryNote"),
   };
 
   const numericFields = [
@@ -386,6 +400,81 @@
     formLoaded = true;
   }
 
+  function renderLocalTelemetry(status) {
+    const config = status.config || {};
+    const enabled =
+      Boolean(status.online) && config.reception_mode === "local";
+    dom.localTelemetryCard.hidden = !enabled;
+    if (!enabled) return;
+
+    const payload = status.local_stats || {};
+    const last = payload.last_minute || {};
+    const receiver = payload.receiver || {};
+    const aircraft = payload.aircraft || {};
+    const number = (value, digits = 1) =>
+      value !== null &&
+      value !== undefined &&
+      Number.isFinite(Number(value))
+        ? Number(value).toFixed(digits)
+        : "—";
+    const db = (value) => {
+      const text = number(value, 1);
+      return text === "—" ? text : `${text} dBFS`;
+    };
+
+    setText(dom.localTelemetryState, payload.error ? "ERREUR" : "LOCAL");
+    setText(dom.localSignal, db(last.signal));
+    setText(
+      dom.localSignalDetail,
+      `bruit ${db(last.noise)} · pic ${db(last.peak_signal)}`,
+    );
+    setText(dom.localRate, number(last.message_rate, 2));
+    setText(
+      dom.localRateDetail,
+      `${Number(last.messages || 0).toLocaleString("fr-FR")} messages / 60 s`,
+    );
+    setText(
+      dom.localPositions,
+      String(Number(aircraft.with_position || 0)),
+    );
+    setText(
+      dom.localPositionsDetail,
+      `${Number(aircraft.with_position || 0)} avec · ` +
+        `${Number(aircraft.without_position || 0)} sans`,
+    );
+    setText(
+      dom.localRange,
+      last.max_distance_nm === null ||
+        last.max_distance_nm === undefined
+        ? "—"
+        : `${number(last.max_distance_nm, 1)} NM`,
+    );
+    setText(dom.localGain, `${number(payload.gain_db, 0)} dB`);
+    setText(
+      dom.localGainDetail,
+      `PPM ${number(payload.estimated_ppm, 1)}`,
+    );
+    const generated = payload.generated_at
+      ? new Date(payload.generated_at)
+      : null;
+    setText(
+      dom.localUpdated,
+      generated && Number.isFinite(generated.getTime())
+        ? `${generated.toISOString().slice(11, 19)} UTC`
+        : "—",
+    );
+    setText(
+      dom.localVersion,
+      receiver.version
+        ? `readsb ${String(receiver.version).split(" ")[0]}`
+        : "—",
+    );
+    setText(
+      dom.localTelemetryNote,
+      payload.error || "Télémétrie du récepteur local (stats.json).",
+    );
+  }
+
   function renderStatus(status) {
     const radar = status.radar || {};
     const config = status.config || {};
@@ -438,13 +527,36 @@
     dom.securityWarning.hidden = !status.default_credentials;
 
     const statsEnabled = online && Boolean(radar.stats_enabled);
-    setText(dom.statsState, online ? (statsEnabled ? "ACTIF" : "OFF") : "—");
-    dom.statsState.className = `stat__value ${statsEnabled ? "is-online" : "is-muted"}`;
+    const statsStale = statsEnabled && Boolean(radar.stats_stale);
+    setText(
+      dom.statsState,
+      online ? (statsEnabled ? (statsStale ? "RETARD" : "ACTIF") : "OFF") : "—",
+    );
+    dom.statsState.className = `stat__value ${
+      statsStale
+        ? "is-warning"
+        : statsEnabled
+          ? "is-online"
+          : "is-muted"
+    }`;
+    const sampleAge = Number(radar.stats_last_sample_age_s);
+    const backupAge = Number(radar.stats_backup_age_s);
+    const backupLabel = Number.isFinite(backupAge)
+      ? backupAge < 120
+        ? `${Math.round(backupAge)} s`
+        : `${Math.round(backupAge / 60)} min`
+      : null;
     setText(
       dom.statsDetail,
       online
         ? statsEnabled
-          ? `${Number(config.stats_sample_seconds || 30)} s · ${Number(config.stats_retention_days || 180)} j`
+          ? statsStale
+            ? Number.isFinite(sampleAge)
+              ? `dernier relevé il y a ${Math.round(sampleAge)} s`
+              : "aucun relevé"
+            : `${Number(config.stats_sample_seconds || 30)} s · ` +
+              `${Number(config.stats_retention_days || 180)} j` +
+              (backupLabel ? ` · backup ${backupLabel}` : "")
           : radar.stats_error || "désactivé"
         : "indisponible",
     );
@@ -489,6 +601,8 @@
         ? `${Math.round(config.dist_nm)} → ${Math.round(config.max_radius_nm)} NM`
         : "—",
     );
+
+    renderLocalTelemetry(status);
     setText(dom.configSource, isRuntime ? "RUNTIME" : "ENVIRONNEMENT");
     dom.configSource.classList.toggle("is-runtime", isRuntime);
 

@@ -114,7 +114,7 @@ if LOCAL_JSON_URL:
         )
 
 LOG_LEVEL = os.getenv("ADSB_LOG_LEVEL", "INFO").upper()
-CORS_ORIGINS_RAW = os.getenv("ADSB_CORS_ORIGINS", "*")
+CORS_ORIGINS_RAW = os.getenv("ADSB_CORS_ORIGINS", "")
 
 BASE_DIR = Path(__file__).resolve().parent
 # Optionnel : permet de servir le frontend depuis FastAPI en développement.
@@ -150,13 +150,17 @@ _local_db_folder = ""
 _local_db_detected_at = 0.0
 _local_db_cache: dict[str, dict[str, Any]] = {}
 _local_db_lock = asyncio.Lock()
+_local_stats_cache: tuple[float, dict[str, Any]] | None = None
+_local_stats_cache_lock = asyncio.Lock()
 
 # Statistiques persistantes de l'antenne (SQLite).
 STATS_DB_PATH = Path(os.getenv("ADSB_STATS_DB_PATH", "/stats/adsb-stats.db"))
 STATS_ENABLED = _env_flag("ADSB_STATS_ENABLED", True)
 STATS_SAMPLE_SECONDS = int(os.getenv("ADSB_STATS_SAMPLE_SECONDS", "30"))
 LOCAL_STATS_STALE_S = float(os.getenv("ADSB_LOCAL_STATS_STALE_S", "30"))
+LOCAL_STATS_CACHE_S = float(os.getenv("ADSB_LOCAL_STATS_CACHE_S", "3.0"))
 STATS_RETENTION_DAYS = int(os.getenv("ADSB_STATS_RETENTION_DAYS", "180"))
+STATS_BACKUP_KEEP = int(os.getenv("ADSB_STATS_BACKUP_KEEP", "7"))
 # Un nouvel échantillon séparé de plus de ce délai compte comme un nouveau
 # passage de l'aéronef, et non comme la continuation du précédent.
 STATS_PASS_GAP_SECONDS = int(os.getenv("ADSB_STATS_PASS_GAP_SECONDS", "1800"))
@@ -165,6 +169,8 @@ if not 5 <= STATS_SAMPLE_SECONDS <= 3600:
     raise RuntimeError("ADSB_STATS_SAMPLE_SECONDS doit être compris entre 5 et 3600.")
 if not 1 <= STATS_RETENTION_DAYS <= 3650:
     raise RuntimeError("ADSB_STATS_RETENTION_DAYS doit être compris entre 1 et 3650.")
+if not 1 <= STATS_BACKUP_KEEP <= 365:
+    raise RuntimeError("ADSB_STATS_BACKUP_KEEP doit être compris entre 1 et 365.")
 if not 60 <= STATS_PASS_GAP_SECONDS <= 86_400:
     raise RuntimeError(
         "ADSB_STATS_PASS_GAP_SECONDS doit être compris entre 60 et 86400."
@@ -283,8 +289,6 @@ BASELINE_CONFIG: dict[str, Any] = {
 }
 
 CORS_ORIGINS = [item.strip() for item in CORS_ORIGINS_RAW.split(",") if item.strip()]
-if not CORS_ORIGINS:
-    CORS_ORIGINS = ["*"]
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -551,6 +555,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     global _cache, _primary_blocked_until, _upstream_retry_after
     global _last_upstream_error, _runtime_config_active
     global _local_db_base, _local_db_folder, _local_db_detected_at
+    global _local_stats_cache
 
     LAT = float(values["lat"])
     LON = float(values["lon"])
@@ -589,6 +594,7 @@ def _apply_runtime_config(values: dict[str, Any], *, active: bool) -> None:
     _local_db_folder = ""
     _local_db_detected_at = 0.0
     _local_db_cache.clear()
+    _local_stats_cache = None
     _runtime_config_active = active
 
 
@@ -1090,32 +1096,35 @@ def _local_stats_payload(
     }
 
 
-async def fetch_local_receiver_stats(client: httpx.AsyncClient) -> dict[str, Any]:
+async def _get_local_json(
+    client: httpx.AsyncClient, url: str
+) -> tuple[dict[str, Any] | None, int | None]:
+    """Lit un JSON du récepteur ; renvoie (payload, statut HTTP)."""
+    try:
+        response = await client.get(url)
+    except httpx.HTTPError:
+        return None, None
+    if response.status_code >= 400:
+        return None, response.status_code
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, response.status_code
+    return (payload if isinstance(payload, dict) else None), response.status_code
+
+
+async def _fetch_local_receiver_stats_uncached(
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
     if RECEPTION_MODE != "local":
         return {"enabled": False}
     if not LOCAL_JSON_URL:
         return {"enabled": True, "error": "URL aircraft.json locale non configurée."}
     base = _local_db_root()
-    stats: dict[str, Any] | None = None
-    receiver: dict[str, Any] = {}
-    stats_status: int | None = None
-    try:
-        stats_response = await client.get(f"{base}data/stats.json")
-        stats_status = stats_response.status_code
-        if stats_response.status_code < 400:
-            payload = stats_response.json()
-            if isinstance(payload, dict):
-                stats = payload
-    except (httpx.HTTPError, ValueError):
-        pass
-    try:
-        receiver_response = await client.get(f"{base}data/receiver.json")
-        if receiver_response.status_code < 400:
-            payload = receiver_response.json()
-            if isinstance(payload, dict):
-                receiver = payload
-    except (httpx.HTTPError, ValueError):
-        pass
+    (stats, stats_status), (receiver, _receiver_status) = await asyncio.gather(
+        _get_local_json(client, f"{base}data/stats.json"),
+        _get_local_json(client, f"{base}data/receiver.json"),
+    )
     if stats is None:
         return {
             "enabled": True,
@@ -1124,9 +1133,33 @@ async def fetch_local_receiver_stats(client: httpx.AsyncClient) -> dict[str, Any
                 if stats_status is not None
                 else "Récepteur local injoignable."
             ),
-            "receiver": receiver,
+            "receiver": receiver or {},
         }
-    return _local_stats_payload(stats, receiver)
+    return _local_stats_payload(stats, receiver or {})
+
+
+async def fetch_local_receiver_stats(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Télémétrie locale avec un cache court partagé entre les endpoints.
+
+    Le récepteur reçoit ainsi au plus une lecture de ``stats.json`` et de
+    ``receiver.json`` toutes les ``ADSB_LOCAL_STATS_CACHE_S`` secondes, même si
+    le desktop et un widget Homepage interrogent en parallèle.
+    """
+    global _local_stats_cache
+    if LOCAL_STATS_CACHE_S <= 0:
+        return await _fetch_local_receiver_stats_uncached(client)
+    now = time.monotonic()
+    cached = _local_stats_cache
+    if cached is not None and now - cached[0] <= LOCAL_STATS_CACHE_S:
+        return cached[1]
+    async with _local_stats_cache_lock:
+        cached = _local_stats_cache
+        now = time.monotonic()
+        if cached is not None and now - cached[0] <= LOCAL_STATS_CACHE_S:
+            return cached[1]
+        payload = await _fetch_local_receiver_stats_uncached(client)
+        _local_stats_cache = (time.monotonic(), payload)
+        return payload
 
 
 async def fetch_best_snapshot(client: httpx.AsyncClient) -> CacheEntry:
@@ -1319,6 +1352,9 @@ async def get_snapshot(client: httpx.AsyncClient) -> tuple[CacheEntry, bool, flo
 _stats_db_ok = False
 _stats_db_error: str | None = None
 _last_stats_recorded_ts = 0
+_last_stats_sample_ts = 0
+_last_stats_backup_at: datetime | None = None
+_last_stats_backup_day: str | None = None
 _last_stats_cleanup_day = ""
 _influx_last_error_at = 0.0
 _stats_summary_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
@@ -1458,6 +1494,7 @@ def cleanup_stats_db(force: bool = False) -> int:
         logger.warning("Nettoyage des statistiques impossible: %s", exc)
         return 0
     _last_stats_cleanup_day = today
+    backup_stats_db()
     if deleted:
         logger.info(
             "Statistiques: %d ancien(s) relevé(s) supprimé(s) avant %s.",
@@ -1467,8 +1504,77 @@ def cleanup_stats_db(force: bool = False) -> int:
     return deleted
 
 
+def backup_stats_db(force: bool = False) -> Path | None:
+    """Copie la base SQLite dans /stats/backups, une fois par jour.
+
+    La copie utilise l'API de sauvegarde SQLite (cohérente même en WAL), puis
+    les anciennes copies sont élaguées selon ``ADSB_STATS_BACKUP_KEEP``.
+    """
+    global _last_stats_backup_at, _last_stats_backup_day
+    if not _stats_db_ok:
+        return None
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    if not force and _last_stats_backup_day == today:
+        return None
+    backup_dir = STATS_DB_PATH.parent / "backups"
+    target = backup_dir / f"adsb-stats-{today}.db"
+    temporary = backup_dir / f"adsb-stats-{today}.tmp"
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            with closing(_stats_connect()) as source:
+                with closing(sqlite3.connect(temporary)) as destination:
+                    source.backup(destination)
+            temporary.replace(target)
+            logger.info("Sauvegarde SQLite créée: %s", target)
+        for old_backup in sorted(backup_dir.glob("adsb-stats-*.db"))[
+            : -STATS_BACKUP_KEEP
+        ]:
+            old_backup.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+        _last_stats_backup_at = utc_now()
+        _last_stats_backup_day = today
+        return target
+    except (OSError, sqlite3.Error) as exc:
+        temporary.unlink(missing_ok=True)
+        logger.warning("Sauvegarde SQLite impossible: %s", exc)
+        return None
+
+
+def stats_health() -> dict[str, Any]:
+    """Indicateurs de fraîcheur de la collecte et des sauvegardes SQLite."""
+    now = time.time()
+    sample_ts = _last_stats_sample_ts
+    sample_age = round(max(0.0, now - sample_ts), 1) if sample_ts else None
+    stale_after = max(120.0, 2.0 * STATS_SAMPLE_SECONDS)
+    stale = bool(
+        stats_available() and (sample_age is None or sample_age > stale_after)
+    )
+    backup_age = (
+        round(max(0.0, now - _last_stats_backup_at.timestamp()), 1)
+        if _last_stats_backup_at is not None
+        else None
+    )
+    return {
+        "stats_last_sample_at": (
+            iso_utc(datetime.fromtimestamp(sample_ts, UTC)) if sample_ts else None
+        ),
+        "stats_last_sample_age_s": sample_age,
+        "stats_stale": stale,
+        "stats_stale_after_s": stale_after,
+        "stats_backup_at": (
+            iso_utc(_last_stats_backup_at)
+            if _last_stats_backup_at is not None
+            else None
+        ),
+        "stats_backup_age_s": backup_age,
+        "stats_backup_keep": STATS_BACKUP_KEEP,
+    }
+
+
 def init_stats_db() -> bool:
     global _stats_db_ok, _stats_db_error, _last_stats_cleanup_day
+    global _last_stats_sample_ts
     if not STATS_ENABLED:
         _stats_db_ok = False
         _stats_db_error = None
@@ -1477,6 +1583,9 @@ def init_stats_db() -> bool:
         _stats_schema()
         _stats_db_ok = True
         _stats_db_error = None
+        with closing(_stats_connect()) as conn:
+            row = conn.execute("SELECT MAX(ts) FROM snapshots").fetchone()
+            _last_stats_sample_ts = int(row[0] or 0) if row is not None else 0
         _last_stats_cleanup_day = datetime.now(UTC).strftime("%Y-%m-%d")
         cleanup_stats_db(force=True)
         logger.info("Base de statistiques SQLite prête: %s", STATS_DB_PATH)
@@ -1488,7 +1597,7 @@ def init_stats_db() -> bool:
 
 
 def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
-    global _last_stats_recorded_ts
+    global _last_stats_recorded_ts, _last_stats_sample_ts
     if not _stats_db_ok:
         return None
     ts = int(snapshot.fetched_at.timestamp())
@@ -1650,6 +1759,7 @@ def record_stats_snapshot(snapshot: CacheEntry) -> dict[str, Any] | None:
         return None
 
     _last_stats_recorded_ts = ts
+    _last_stats_sample_ts = ts
     cleanup_stats_db()
     default_counts = counts.get(str(default_range), {})
     return {
@@ -1972,7 +2082,7 @@ def clear_stats_summary_cache() -> None:
 
 
 def reset_stats_db() -> int:
-    global _last_stats_recorded_ts
+    global _last_stats_recorded_ts, _last_stats_sample_ts
     if not _stats_db_ok:
         return 0
     with closing(_stats_connect()) as conn:
@@ -1981,6 +2091,7 @@ def reset_stats_db() -> int:
         conn.execute("DELETE FROM aircraft_seen")
         conn.commit()
     _last_stats_recorded_ts = 0
+    _last_stats_sample_ts = 0
     return int(deleted)
 
 
@@ -2241,32 +2352,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=[
-        "X-Data-Stale",
-        "X-Upstream",
-        "X-Fallback",
-        "X-Cache-Age",
-        "X-Upstream-Latency-Ms",
-        "X-Last-Success",
-        "X-Reception-Mode",
-        "X-Refresh-Ms",
-        "X-Range-NM",
-        "X-Max-Range-NM",
-        "X-Default-Range-NM",
-        "X-Center-Lat",
-        "X-Center-Lon",
-        "X-Radar-Style",
-        "X-Location-Mode",
-        "X-Airport-ICAO",
-    ],
-)
-
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "OPTIONS"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Data-Stale",
+            "X-Upstream",
+            "X-Fallback",
+            "X-Cache-Age",
+            "X-Upstream-Latency-Ms",
+            "X-Last-Success",
+            "X-Reception-Mode",
+            "X-Refresh-Ms",
+            "X-Range-NM",
+            "X-Max-Range-NM",
+            "X-Default-Range-NM",
+            "X-Center-Lat",
+            "X-Center-Lon",
+            "X-Radar-Style",
+            "X-Location-Mode",
+            "X-Airport-ICAO",
+        ],
+    )
 
 if INDEX_FILE.is_file():
 
@@ -2611,6 +2722,7 @@ async def api_health() -> dict[str, Any]:
             "config_source": "runtime" if _runtime_config_active else "environment",
             "stats_enabled": stats_available(),
             "stats_error": _stats_db_error,
+            **stats_health(),
         }
 
     age = time.monotonic() - snapshot.fetched_monotonic
@@ -2626,6 +2738,7 @@ async def api_health() -> dict[str, Any]:
         "max_radius_nm": MAX_RADIUS_NM,
         "stats_enabled": stats_available(),
         "stats_error": _stats_db_error,
+        **stats_health(),
     }
 
 

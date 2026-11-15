@@ -8,15 +8,20 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+RUN groupadd --gid 10001 radardesk \
+    && useradd --uid 10001 --gid radardesk --home-dir /nonexistent \
+       --no-create-home --shell /usr/sbin/nologin radardesk \
+    && mkdir -p /data \
+    && chown radardesk:radardesk /data
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py ./
-COPY static ./static/
-RUN mkdir -p /data
+COPY --chown=radardesk:radardesk server.py ./
+COPY --chown=radardesk:radardesk static ./static/
 
-# Le service tourne en root uniquement pour écrire le volume partagé /data.
-# Il reste protégé par Basic Auth et n'est jamais exposé au backend public.
+# Le volume /data est préparé par admin_data_init (uid/gid 10001).
+USER 10001:10001
 EXPOSE 8000
 
 CMD ["python", "server.py"]

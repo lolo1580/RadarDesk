@@ -33,9 +33,11 @@ Dépôt : [github.com/lolo1580/RadarDesk](https://github.com/lolo1580/RadarDesk)
 - Trois styles de radar : phosphore vert, monochrome et ATC moderne.
 - Interface desktop sur `8083` : carte **tar1090** complète (filtres,
   recherche, table, calques, traces de session) et deux vues statistiques
-  distinctes selon le mode de réception (en ligne ou local).
+  distinctes selon le mode de réception (en ligne ou local), avec bascule
+  **TEMPS RÉEL / HISTORIQUE** en réception locale.
 - Statistiques de réception persistantes en SQLite, échantillonnées en continu
   par le backend, avec export InfluxDB v2 configurable dans l'administration.
+- Sauvegardes SQLite quotidiennes automatiques et conservation configurable.
 - Deux API compactes pour Homepage : `/api/widgets/homepage` pour le trafic et
   les compteurs SQLite, `/api/widgets/receiver` pour la télémétrie du
   récepteur local.
@@ -101,6 +103,14 @@ RadarDesk/
 ├── .env.example
 ├── .gitignore
 ├── README.md
+├── .github/workflows/ci.yml
+├── pytest.ini
+├── tests/
+│   ├── test_backend.py
+│   ├── test_admin.py
+│   └── e2e/
+│       ├── package.json
+│       └── smoke.mjs
 ├── backend/
 │   ├── Dockerfile
 │   ├── .dockerignore
@@ -146,6 +156,8 @@ RadarDesk/
 │           ├── LICENSE
 │           └── images/
 └── tar1090/
+    ├── Dockerfile
+    ├── patch-layers.awk
     ├── config.js
     └── db2/
         ├── ranges.js
@@ -273,14 +285,17 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_PRIMARY_COOLDOWN` | `600` | Pause après un 403 primaire (s) |
 | `ADSB_RECEPTION_MODE` | `online` | `online` ou `local` (aircraft.json) |
 | `ADSB_LOCAL_JSON_URL` | — | URL aircraft.json du récepteur local |
+| `ADSB_LOCAL_STATS_STALE_S` | `30` | Délai avant de marquer la télémétrie locale `degraded` |
+| `ADSB_LOCAL_STATS_CACHE_S` | `3.0` | Cache partagé de la télémétrie locale (s, 0 = désactivé) |
 | `ADSB_LOG_LEVEL` | `INFO` | Niveau de journalisation |
-| `ADSB_CORS_ORIGINS` | `*` | Origines CORS autorisées |
+| `ADSB_CORS_ORIGINS` | — | Origines CORS autorisées ; vide = même origine |
 | `ADSB_ADMIN_PORT` | `8082` | Port hôte de l'interface d'administration |
 | `ADSB_DESKTOP_PORT` | `8083` | Port hôte du desktop (stats + proxy tar1090) |
 | `ADSB_TAR1090_PORT` | `8084` | Port hôte de tar1090 (accès direct) |
 | `ADSB_TAR1090_WRITE_INTERVAL_S` | `10` | Intervalle d'écriture des données tar1090 (s) |
 | `ADSB_ADMIN_USER` | `admin` | Utilisateur Basic Auth admin |
 | `ADSB_ADMIN_PASSWORD` | `admin` | Mot de passe admin (à changer) |
+| `ADSB_ADMIN_LOGIN_MAX_ATTEMPTS` | `5` | Échecs avant ralentissement des tentatives Basic Auth |
 | `ADSB_RADAR_STYLE` | `phosphor` | Style : `phosphor`, `mono` ou `atc` |
 | `ADSB_LOCATION_MODE` | `coords` | Localisation : `coords` ou `airport` |
 | `ADSB_AIRPORT_ICAO` | — | Code OACI si `ADSB_LOCATION_MODE=airport` |
@@ -292,6 +307,7 @@ par défaut sont déjà présentes dans `docker-compose.yml`.
 | `ADSB_STATS_SAMPLE_SECONDS` | `30` | Intervalle d'échantillonnage du collecteur (s) |
 | `ADSB_STATS_RETENTION_DAYS` | `180` | Conservation de l'historique (jours) |
 | `ADSB_STATS_PASS_GAP_SECONDS` | `1800` | Délai (s) au-delà duquel un retour compte comme un nouveau passage |
+| `ADSB_STATS_BACKUP_KEEP` | `7` | Nombre de sauvegardes SQLite quotidiennes conservées |
 | `ADSB_INFLUX_ENABLED` | `false` | Active l'export InfluxDB v2 |
 | `ADSB_INFLUX_URL` | — | URL de base InfluxDB, ex. `http://influxdb:8086` |
 | `ADSB_INFLUX_ORG` | — | Organisation InfluxDB |
@@ -392,7 +408,13 @@ rafraîchissement et sources.
 ### `GET /api/health`
 
 État du cache sans appel upstream. Utilisé aussi par le healthcheck Docker du
-backend.
+backend. Contient également la santé de la collecte SQLite :
+
+- `stats_last_sample_at` / `stats_last_sample_age_s` : dernier échantillon ;
+- `stats_stale` : vrai si aucun échantillon récent (seuil
+  `max(120 s, 2 × ADSB_STATS_SAMPLE_SECONDS)`) ;
+- `stats_backup_at` / `stats_backup_age_s` / `stats_backup_keep` : dernière
+  sauvegarde quotidienne.
 
 ### `GET /api/weather/metar?ids=LSGG,LSZH`
 
@@ -437,8 +459,10 @@ gonflent donc pas le compteur.
 Télémétrie du récepteur local lorsque `reception_mode=local`. L'endpoint lit
 `data/stats.json` et `data/receiver.json` sur le récepteur et renvoie les
 messages/s, le signal, le bruit, le pic, la portée max, les échantillons, les
-messages acceptés/rejetés et les informations de version. En mode en ligne, il
-renvoie `{"enabled": false}`. Il ne contient aucun token ni secret.
+messages acceptés/rejetés et les informations de version. Les deux lectures
+sont parallèles et partagées par un cache de `ADSB_LOCAL_STATS_CACHE_S`
+(3 s par défaut), commun avec le widget Homepage. En mode en ligne, il renvoie
+`{"enabled": false}`. Il ne contient aucun token ni secret.
 
 ### `GET /api/widgets/homepage?range_nm=50`
 
@@ -511,7 +535,10 @@ La configuration de la carte se trouve dans `tar1090/config.js`. Le dossier
 `tar1090/db2/` fournit des réponses minimales pour la base de métadonnées
 tar1090 ; les informations principales (immatriculation, type, indicatif)
 viennent directement de RadarDesk. tar1090 est un projet GPL-2.0-or-later
-distribué via l'image `blackoutsecure/tar1090`.
+distribué via l'image `blackoutsecure/tar1090`, épinglée par digest dans
+`tar1090/Dockerfile`. L'image locale `radardesk-tar1090:local` retire les
+calques VFR/IFR ArcGIS inutilisés hors couverture US, qui provoquaient des
+requêtes de tuiles en erreur dans la console et le réseau.
 
 ### Vue STATS
 
@@ -546,10 +573,13 @@ Le contenu de `STATS` dépend du mode de réception actif.
 - panneau antenne locale.
 
 Cette page est alimentée par `stats.json` et `receiver.json` du récepteur local
-via `GET /api/local/stats`. Elle ne charge pas l'historique SQLite, le cumul
-d'immatriculations ni le personnalisateur, qui restent propres au mode en
-ligne. Le basculement entre les deux pages est automatique quand le mode de
-réception change.
+via `GET /api/local/stats`. Le sélecteur **TEMPS RÉEL / HISTORIQUE** permet
+d'ouvrir la page SQLite sans quitter le mode local : l'historique, le cumul
+d'immatriculations et le personnalisateur restent ainsi accessibles. En mode
+temps réel, la télémétrie locale est rafraîchie toutes les 10 s ; en mode
+historique, la page SQLite conserve son sélecteur de période et son bouton
+**PERSONNALISER**. Le basculement de mode de réception remet la vue locale en
+temps réel.
 
 La portée choisie dans la barre supérieure s'applique aux deux vues `STATS` et
 aux compteurs RadarDesk. tar1090 possède ses propres filtres de portée.
@@ -572,7 +602,8 @@ Le service `admin` est séparé du backend radar :
 - interface web moderne sombre et responsive sur `http://<hôte>:8082`,
   organisée en trois tâches distinctes accessibles depuis le menu latéral :
   **Vue d'ensemble**, **Récepteur** et **Statistiques & InfluxDB** ;
-- HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` ;
+- HTTP Basic Auth, avec identifiants par défaut `admin` / `admin` et
+  ralentissement progressif des tentatives échouées par adresse IP ;
 - **Vue d'ensemble** : état du radar (liaison, source, cache, cibles,
   configuration active, base SQLite, InfluxDB), raccourcis vers les tâches et
   actions globales **Recharger** / **Réinitialiser** ;
@@ -581,7 +612,9 @@ Le service `admin` est séparé du backend radar :
   METAR, avec un bouton **Appliquer** qui ne modifie pas l'export InfluxDB.
   Le mode de réception peut être **en ligne** (Airplanes.live / adsb.lol) ou
   **local** (URL `aircraft.json` readsb / dump1090), avec un bouton
-  **Tester la source**.
+  **Tester la source**. En mode local, une carte **Télémétrie temps réel**
+  affiche signal, bruit, pic, messages/s, positions RX, portée max, gain/PPM,
+  version et dernier relevé.
   En mode OACI, le HUD radar affiche le code de l'aéroport (`· LSGG`) et
   l'aéroport le plus proche passe à `0.0 NM` ;
 - **Statistiques & InfluxDB** : formulaire d'export séparé (URL, organisation,
@@ -593,7 +626,8 @@ Le service `admin` est séparé du backend radar :
   vue d'ensemble ;
 - le panneau du radar affiche par défaut l'aéroport le plus proche des
   coordonnées configurées, avec bascule CONTACTS / AÉROPORT ;
-- persistance dans le volume Docker `radardesk_admin_data` ;
+- persistance dans le volume Docker `radardesk_admin_data` ; le conteneur
+  tourne en uid/gid `10001` et le volume est préparé par `admin_data_init` ;
 - l'export InfluxDB v2 utilise la portée par défaut configurée pour l'antenne ;
 - le bouton **EFFACER L'HISTORIQUE** vide uniquement la base SQLite des
   statistiques, sans toucher aux données déjà écrites dans InfluxDB.
@@ -621,6 +655,40 @@ Puis :
 ```bash
 docker compose up -d --force-recreate backend admin
 ```
+
+Pour une exposition réseau, placer l'admin et le desktop derrière un reverse
+proxy HTTPS (Caddy, Traefik ou Nginx) plutôt que d'ouvrir `8082`/`8083` en
+clair. Exemple Caddy minimal :
+
+```caddyfile
+radar.example.lan {
+    reverse_proxy 192.168.30.21:8083
+}
+admin.example.lan {
+    reverse_proxy 192.168.30.21:8082
+}
+```
+
+### Sauvegardes SQLite
+
+Le backend crée une copie cohérente de la base dans
+`/stats/backups/adsb-stats-AAAA-MM-JJ.db` une fois par jour, au premier
+échantillon ou au démarrage. Les copies utilisent l'API de sauvegarde SQLite
+(compatible WAL), puis les plus anciennes sont supprimées au-delà de
+`ADSB_STATS_BACKUP_KEEP` (7 par défaut).
+
+La santé de la dernière sauvegarde est exposée par `/api/health`
+(`stats_backup_at`) et reprise dans l'administration. Pour restaurer une copie :
+
+```bash
+docker compose stop backend
+docker run --rm -v radardesk_stats_data:/stats alpine:3.20 \
+  cp /stats/backups/adsb-stats-2026-11-15.db /stats/adsb-stats.db
+docker compose start backend
+```
+
+Conserver la sauvegarde manuelle existante
+`adsb-stats.backup-*.db` : elle n'est jamais élaguée par la rotation.
 
 ## Réception locale (readsb / dump1090)
 
@@ -1066,6 +1134,31 @@ ADSB_STATIC_DIR=../frontend python server.py
 
 Puis ouvrir `http://localhost:8000`. Dans ce mode, l'API et les fichiers
 statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
+
+### Tests et CI
+
+```bash
+python3 -m pip install -r backend/requirements.txt \
+  -r admin/requirements.txt pytest
+python3 -m pytest
+```
+
+Les tests couvrent les calculs de distance/portée, la télémétrie locale, la
+base SQLite (échantillon, résumé, sauvegarde) et la validation de la
+configuration admin. La CI GitHub Actions vérifie aussi la syntaxe JavaScript
+et la validité de `docker-compose.yml`.
+
+Un test de fumée navigateur est fourni dans `tests/e2e/smoke.mjs` :
+
+```bash
+cd tests/e2e
+npm install
+DESKTOP_URL=http://desktop/ ADMIN_URL=http://admin:8000/ npm test
+```
+
+Il vérifie le desktop (vue locale, bascule TEMPS RÉEL/HISTORIQUE), l'admin et
+l'absence de débordement horizontal. Le lancer de préférence dans le conteneur
+Playwright sur le réseau `radardesk_default`.
 
 ## Dépannage
 

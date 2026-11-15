@@ -10,6 +10,15 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  admin_data_init:
+    image: alpine:3.20
+    command: ["sh", "-c", "chown -R 10001:10001 /data && chmod 700 /data"]
+    volumes:
+      - admin_data:/data
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
   backend:
     build:
       context: ./backend
@@ -32,8 +41,9 @@ services:
       ADSB_RECEPTION_MODE: "${ADSB_RECEPTION_MODE:-online}"
       ADSB_LOCAL_JSON_URL: "${ADSB_LOCAL_JSON_URL:-}"
       ADSB_LOCAL_STATS_STALE_S: "${ADSB_LOCAL_STATS_STALE_S:-30}"
+      ADSB_LOCAL_STATS_CACHE_S: "${ADSB_LOCAL_STATS_CACHE_S:-3.0}"
       ADSB_LOG_LEVEL: "${ADSB_LOG_LEVEL:-INFO}"
-      ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-*}"
+      ADSB_CORS_ORIGINS: "${ADSB_CORS_ORIGINS:-}"
       ADSB_METAR_PROVIDER: "${ADSB_METAR_PROVIDER:-aviationweather}"
       ADSB_RADAR_STYLE: "${ADSB_RADAR_STYLE:-phosphor}"
       ADSB_LOCATION_MODE: "${ADSB_LOCATION_MODE:-coords}"
@@ -47,6 +57,7 @@ services:
       ADSB_STATS_SAMPLE_SECONDS: "${ADSB_STATS_SAMPLE_SECONDS:-30}"
       ADSB_STATS_RETENTION_DAYS: "${ADSB_STATS_RETENTION_DAYS:-180}"
       ADSB_STATS_PASS_GAP_SECONDS: "${ADSB_STATS_PASS_GAP_SECONDS:-1800}"
+      ADSB_STATS_BACKUP_KEEP: "${ADSB_STATS_BACKUP_KEEP:-7}"
       ADSB_INFLUX_ENABLED: "${ADSB_INFLUX_ENABLED:-false}"
       ADSB_INFLUX_URL: "${ADSB_INFLUX_URL:-}"
       ADSB_INFLUX_ORG: "${ADSB_INFLUX_ORG:-}"
@@ -73,6 +84,9 @@ services:
       tar1090_data_init:
         condition: service_completed_successfully
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
     healthcheck:
       test:
         - CMD
@@ -101,6 +115,9 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 15s
@@ -129,6 +146,9 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
       interval: 15s
@@ -142,7 +162,10 @@ services:
         max-file: "2"
 
   tar1090:
-    image: blackoutsecure/tar1090:latest
+    build:
+      context: ./tar1090
+      dockerfile: Dockerfile
+    image: radardesk-tar1090:local
     environment:
       TZ: "${TZ:-Etc/UTC}"
       TAR1090_SOURCE_DIR: /data/readsb
@@ -164,6 +187,9 @@ services:
       tar1090_data_init:
         condition: service_completed_successfully
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/"]
       interval: 15s
@@ -180,11 +206,13 @@ services:
     build:
       context: ./admin
       dockerfile: Dockerfile
+    user: "10001:10001"
     environment:
       ADMIN_HOST: "0.0.0.0"
       ADMIN_PORT: "8000"
       ADSB_ADMIN_USER: "${ADSB_ADMIN_USER:-admin}"
       ADSB_ADMIN_PASSWORD: "${ADSB_ADMIN_PASSWORD:-admin}"
+      ADSB_ADMIN_LOGIN_MAX_ATTEMPTS: "${ADSB_ADMIN_LOGIN_MAX_ATTEMPTS:-5}"
       ADSB_INTERNAL_TOKEN: "${ADSB_INTERNAL_TOKEN:?Definir ADSB_INTERNAL_TOKEN dans .env}"
       ADSB_RUNTIME_CONFIG_FILE: /data/runtime.json
       RADAR_BACKEND_URL: http://backend:8000
@@ -198,6 +226,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      admin_data_init:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:size=16m
@@ -206,6 +236,9 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
     healthcheck:
       test:
         - CMD
