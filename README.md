@@ -115,7 +115,14 @@ RadarDesk/
 │   ├── Dockerfile
 │   ├── .dockerignore
 │   ├── requirements.txt
-│   └── server.py
+│   ├── server.py          # configuration, cache, routes, orchestration
+│   ├── stats_store.py     # SQLite : schéma, collecte, rétention, sauvegardes
+│   ├── influx_export.py   # export InfluxDB v2
+│   ├── local_support.py   # télémétrie du récepteur local
+│   ├── weather_parsing.py # normalisation METAR / TAF
+│   ├── tar1090_writer.py  # aircraft.json / receiver.json
+│   ├── adsb_models.py     # modèles Pydantic
+│   └── adsb_utils.py      # géo, nettoyage, normalisation des cibles
 ├── admin/
 │   ├── Dockerfile
 │   ├── .dockerignore
@@ -1139,14 +1146,34 @@ statiques sont servis par FastAPI ; en Docker, Nginx assure ce rôle.
 
 ```bash
 python3 -m pip install -r backend/requirements.txt \
-  -r admin/requirements.txt pytest
+  -r admin/requirements.txt pytest ruff
+ruff check backend tests
 python3 -m pytest
 ```
 
 Les tests couvrent les calculs de distance/portée, la télémétrie locale, la
 base SQLite (échantillon, résumé, sauvegarde) et la validation de la
-configuration admin. La CI GitHub Actions vérifie aussi la syntaxe JavaScript
-et la validité de `docker-compose.yml`.
+configuration admin. Le code Python est vérifié avec `ruff`, la CI GitHub
+Actions contrôle aussi la syntaxe JavaScript et la validité de
+`docker-compose.yml`.
+
+### Organisation du backend
+
+`server.py` reste le point d'entrée : il porte la configuration runtime, les
+providers, le cache, les routes FastAPI et l'orchestration des boucles. Les
+responsabilités spécialisées sont isolées :
+
+- `stats_store.py` : classe `StatsStore`, schéma SQLite, collecte, passages,
+  rétention, sauvegardes et indicateurs de santé ;
+- `influx_export.py` : classe `InfluxExporter`, ligne de mesure et écriture ;
+- `local_support.py` : lecture des JSON du récepteur et payload de télémétrie ;
+- `weather_parsing.py` : nettoyage des réponses Aviation Weather, metar-taf et
+  CheckWX ;
+- `tar1090_writer.py` : écriture atomique des fichiers lus par tar1090 ;
+- `adsb_models.py` et `adsb_utils.py` : modèles partagés, géo et normalisation.
+
+Les modules reçoivent le centre, la portée et la configuration courante via
+`server.py` ; ils restent ainsi testables sans démarrer FastAPI.
 
 Un test de fumée navigateur est fourni dans `tests/e2e/smoke.mjs` :
 

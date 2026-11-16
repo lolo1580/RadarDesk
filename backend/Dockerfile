@@ -17,6 +17,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=adsb:adsb server.py ./
+COPY --chown=adsb:adsb adsb_models.py adsb_utils.py influx_export.py local_support.py stats_store.py tar1090_writer.py weather_parsing.py ./
 
 USER adsb
 EXPOSE 8000

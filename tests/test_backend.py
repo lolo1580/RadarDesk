@@ -1,11 +1,10 @@
-import base64
 import json
 import time
 from datetime import UTC, datetime
 
 import pytest
 
-from backend import server
+from backend import server, weather_parsing
 
 
 def test_haversine_zero_and_one_degree():
@@ -21,19 +20,15 @@ def test_effective_stats_range_snaps_to_standard_steps(monkeypatch):
     assert server._effective_stats_range(500) == 150
 
 
-def test_local_db_root_handles_aircraft_json_paths(monkeypatch):
-    monkeypatch.setattr(
-        server,
-        "LOCAL_JSON_URL",
-        "http://192.168.30.13:8080/data/aircraft.json",
+def test_local_db_root_handles_aircraft_json_paths():
+    assert (
+        server.local_db_root("http://192.168.30.13:8080/data/aircraft.json")
+        == "http://192.168.30.13:8080/"
     )
-    assert server._local_db_root() == "http://192.168.30.13:8080/"
-    monkeypatch.setattr(
-        server,
-        "LOCAL_JSON_URL",
-        "https://receiver.local/readsb/aircraft.json",
+    assert (
+        server.local_db_root("https://receiver.local/readsb/aircraft.json")
+        == "https://receiver.local/readsb/"
     )
-    assert server._local_db_root() == "https://receiver.local/readsb/"
 
 
 def test_local_stats_payload_computes_rates_and_conversions():
@@ -72,7 +67,7 @@ def test_local_stats_payload_computes_rates_and_conversions():
         "lon": 6.94,
         "readsb": True,
     }
-    payload = server._local_stats_payload(stats, receiver)
+    payload = server.local_stats_payload(stats, receiver)
     assert payload["enabled"] is True
     assert payload["source"] == "local"
     assert payload["last_minute"]["message_rate"] == pytest.approx(10.0)
@@ -86,14 +81,15 @@ def test_local_stats_payload_computes_rates_and_conversions():
 
 def test_stats_database_records_and_reports(tmp_path, monkeypatch):
     db_path = tmp_path / "stats.db"
-    monkeypatch.setattr(server, "STATS_DB_PATH", db_path)
-    monkeypatch.setattr(server, "STATS_ENABLED", True)
-    monkeypatch.setattr(server, "_stats_db_ok", False)
-    monkeypatch.setattr(server, "_stats_db_error", None)
-    monkeypatch.setattr(server, "_last_stats_recorded_ts", 0)
-    monkeypatch.setattr(server, "_last_stats_sample_ts", 0)
-    monkeypatch.setattr(server, "_last_stats_backup_day", None)
-    monkeypatch.setattr(server, "_last_stats_backup_at", None)
+    store = server.StatsStore(
+        db_path,
+        enabled=True,
+        sample_seconds=30,
+        retention_days=180,
+        backup_keep=3,
+        pass_gap_seconds=1800,
+    )
+    monkeypatch.setattr(server, "stats_store", store)
     monkeypatch.setattr(server, "LAT", 46.818)
     monkeypatch.setattr(server, "LON", 6.94)
     monkeypatch.setattr(server, "DIST_NM", 50)
@@ -129,7 +125,7 @@ def test_stats_database_records_and_reports(tmp_path, monkeypatch):
     assert len(backups) == 1
     for day in range(1, 6):
         (tmp_path / "backups" / f"adsb-stats-2020-01-0{day}.db").write_bytes(b"x")
-    server.backup_stats_db(force=True)
+    store.backup(force=True)
     assert len(list((tmp_path / "backups").glob("adsb-stats-*.db"))) <= 3
     health = server.stats_health()
     assert health["stats_last_sample_age_s"] is not None
@@ -138,8 +134,8 @@ def test_stats_database_records_and_reports(tmp_path, monkeypatch):
 
 
 def test_parse_metar_visibility():
-    assert server.parse_metar_visibility_sm("CAVOK") == pytest.approx(6.21)
-    assert server.parse_metar_visibility_sm("10SM") == pytest.approx(10.0)
-    assert server.parse_metar_visibility_sm("1/2SM") == pytest.approx(0.5)
-    assert server.parse_metar_visibility_sm("9999") == pytest.approx(6.21)
-    assert server.parse_metar_visibility_sm("////") is None
+    assert weather_parsing.parse_metar_visibility_sm("CAVOK") == pytest.approx(6.21)
+    assert weather_parsing.parse_metar_visibility_sm("10SM") == pytest.approx(10.0)
+    assert weather_parsing.parse_metar_visibility_sm("1/2SM") == pytest.approx(0.5)
+    assert weather_parsing.parse_metar_visibility_sm("9999") == pytest.approx(6.21)
+    assert weather_parsing.parse_metar_visibility_sm("////") is None

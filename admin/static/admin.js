@@ -544,7 +544,9 @@
     const backupLabel = Number.isFinite(backupAge)
       ? backupAge < 120
         ? `${Math.round(backupAge)} s`
-        : `${Math.round(backupAge / 60)} min`
+        : backupAge < 7200
+          ? `${Math.round(backupAge / 60)} min`
+          : `${Math.round(backupAge / 3600)} h`
       : null;
     setText(
       dom.statsDetail,
